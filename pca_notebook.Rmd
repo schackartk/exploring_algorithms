@@ -1,0 +1,426 @@
+---
+title: "Explained: Principal Component Analysis"
+output: html_notebook
+---
+
+# {.tabset}
+
+```{r setup, include=FALSE}
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(hurwitzLab)
+library(parsnip)
+library(stringr)
+library(tibble)
+library(tidyr)
+
+theme_set(theme_light() +
+          theme(plot.title = element_text(hjust=0.5),
+                plot.subtitle = element_text(hjust=0.5)))
+```
+
+## Intoduction
+
+### The Data
+
+This document is intended to give an intuitive sense of how PCA works.
+
+I will be using the mtcars dataset built-in to R. For our purposes, we will only
+be looking at 3 variables: weight (`wt`), horsepower (`hp`), and mpg. Prior to
+looking at the data, I will split into training and testing sets. The training set
+has 80% of the data. Here is what they look like.
+
+```{r data_select, echo=FALSE}
+df <- mtcars %>% select(mpg, wt, hp)
+
+set.seed(3456)
+trainIndex <- createDataPartition(df$mpg, p = .8,
+                                  list = FALSE,
+                                  times = 1)
+train <- df[trainIndex,]
+test <- df[-trainIndex,]
+
+train
+```
+
+### Sample Plot
+
+```{r raw_plot, echo=FALSE}
+train %>% ggplot(aes(x=wt, y=hp, color=mpg)) +
+  geom_smooth(method="lm", se=FALSE,
+              color=get_hurwitz_colors("light_gray")) +
+  geom_point() +
+  scale_color_hurwitz(discrete=FALSE, palette="classic") +
+  labs(x="Weight (1000 lb)",
+       y="Power (hp)",
+       color="Fuel Efficiency (mpg)",
+       title="Scatterplot of mtcars")
+```
+### The Goal
+
+Let's assume that the goal of this is to create a model that predicts `mpg` based
+on `weight` and `power`.
+
+
+## Linear Regressions
+
+### Multiple Linear Regressions {.tabset}
+
+Keeping the goal in mind, one approach would be to create a simple linear regression.
+
+$y = mx + b$
+
+Where:
+
+* $y$: `mpg`
+* $m$: slope
+* $b$: intercept
+* $x$: independent variable (`weight` or `power`)
+
+```{r lm, echo=FALSE}
+lm_model <- linear_reg() %>% 
+  set_engine("lm") %>% 
+  set_mode("regression")
+```
+
+
+Since we have 2 predictors (`weight` and `power`), then we could make 2 separate
+linear regressions, and choose whichever one has a better fit to be our predictor.
+
+```{r multiple_regressions, echo=FALSE}
+wt_model <- lm_model %>% 
+  fit(mpg ~ wt, data=train)
+
+hp_model <- lm_model %>% 
+  fit(mpg ~ hp, data=train)
+```
+
+#### Weight
+
+```{r wt_model, echo=FALSE}
+wt_rs <- round(summary(wt_model$fit)$adj.r.squared, digits = 3)
+
+train %>% ggplot(aes(x=wt, y=mpg)) +
+  geom_smooth(method="lm", se=FALSE,
+              color=get_hurwitz_colors("light_gray")) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="MPG vs Weight",
+       subtitle=str_glue("r squared = {wt_rs}"),
+       x="Weight (1000 lb)",
+       y="Fuel Efficiency (mpg)")
+```
+#### Power
+
+```{r hp_model, echo=FALSE}
+hp_rs <- round(summary(hp_model$fit)$adj.r.squared, digits = 3)
+
+train %>% ggplot(aes(x=hp, y=mpg)) +
+  geom_smooth(method="lm", se=FALSE,
+              color=get_hurwitz_colors("light_gray")) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="MPG vs Power",
+       subtitle=str_glue("r squared = {hp_rs}"),
+       x="Power (hp)",
+       y="Fuel Efficiency (mpg)")
+```
+### {-}
+
+Between these two regressions, weight seems a better predictor than power.
+
+Wouldn't it be nice to have a model that creates a regression on both at the sametime?
+
+---
+
+### Multilinear Regression
+
+Multilinear regression (MLR) does exactly this. The formula in our case would be:
+$y=m_1x_1 + m_2x_2 + b$
+
+Where:
+
+* $y$: `mpg`
+* $x_1$: `weight`
+* $m_1$: coefficient for `weight`
+* $x_2$: `power`
+* $m_2$: coefficient for `power`
+* $b$: intercept
+
+After performing this fit, here is the resulting MLR. 
+
+x1 is $x_1$ and x2 is $x_2$.
+
+```{r regression, echo=FALSE}
+lm_fit <- lm_model %>% 
+  fit(mpg ~ ., data=train)
+
+m1 <- round(summary(lm_fit$fit)$coefficients["wt",1], 2)
+m2 <- round(summary(lm_fit$fit)$coefficients["hp",1], 2)
+b <- round(summary(lm_fit$fit)$coefficients["(Intercept)",1], 2)
+rsq <- round(summary(lm_fit$fit)$adj.r.squared, digits = 3)
+
+print(str_glue("y = {m1}x1 + {m2}x2 + {b}"))
+print(str_glue("r squared = {rsq}"))
+```
+
+We can see that this is a better model than either of the individual linear regressions.
+
+But imagine if you have a very large number of predictors. There would have to be a term for each one. This is one of many reasons why we may want to perform dimension reduction. This will reduce the number of predictors so that the regression model is simplified.
+
+## Projections
+
+Although our dataset already has very few predictors (2), it can be used to illustrate the logic of dimension reduction very well.
+
+So, lets go about reducing the number of predictors from 2 to 1.
+
+---
+
+### Correlated Predictors
+
+Let's go back to a plot of our 2 predictors.
+
+```{r corr_plot, echo=FALSE}
+train %>% ggplot(aes(x=wt, y=hp)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Weight (1000 lb)",
+       y="Power (hp)",
+       title="Correlated Predictors")
+```
+It is quite apparent that these two predictors are correlated. As weight increases, power generally increases too.
+
+Another way to put it is that if we know the weight, we know *something* about the power, and vice-versa. Of course the relationship isn't perfect -- we cannot predict power with perfect accuracy based on weight.
+
+---
+
+### Least Squares Regression
+
+One way that we can see the correlation is with least-squares regression. This is what we generally mean when we say "linear regression", and is the method that was used in the previous section on MLR.
+
+Least-squares regression finds the line that minimizes the magnitude of the errors. But is it important to note that it is defining errors based only on the $y$ values, i.e. the difference between the actual $y$ values and the predicted $y$ values. These errors can be visualized as vertical lines.
+
+```{r pred_reg, echo=FALSE}
+dr_model <- lm_model %>% 
+  fit(hp ~ wt, data=train)
+
+dr_int <- summary(dr_model$fit)$coefficients["(Intercept)",1]
+dr_slope <- summary(dr_model$fit)$coefficients["wt",1]
+```
+
+```{r vert_bars, echo=FALSE}
+train %>% ggplot(aes(x=wt, y=hp))+
+  geom_segment(aes(xend=wt, yend=hp-dr_model$fit$residuals),
+               colour=get_hurwitz_colors("viking")) +
+  geom_abline(slope=dr_slope, intercept = dr_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Weight (1000 lb)",
+       y="Power (hp)",
+       title="Least-Squares Regression")
+```
+
+
+While the fact that least-squares regression is based on "vertical" errors may seem subtle, it can have certain implications, as we will see later.
+
+---
+
+### Regression Line as a New Axis?
+
+Getting back to the objective: reducing our 2 predictors to 1.
+
+This may not be an immediately obvious choice, but what if we converted our 2 predictors into 1 by taking the regression line to be a new axis.
+
+Each point could then be represented by a single number: how far along the regression line that point lies.
+
+To see how far along the regression line a point lies, we can draw a line segment that is perpendicular to the regression line, connecting the point to the regression line.
+
+Before we try this with our dataset, let me illustrate the idea with some made up data.
+
+```{r perps, echo=FALSE, fig.height=6, fig.width=6}
+perp_segment_coord <- function(x0, y0, int, slp){
+  # finds endpoint for a perpendicular segment from the point (x0,y0) to the line
+  x1 <- (x0 + slp*(y0 - int))/(1 + slp^2)
+  y1 <- slp*x1 + int
+  list(x0=x0, y0=y0, x1=x1, y1=y1)
+}
+
+df_fake <- tibble(
+  x = c(0.23, 0.71, 1.02, 1.28, 1.63, 1.87, 1.98,
+        2.34, 2.8, 3.2, 3.56, 3.9, 4.5, 4.65),
+  y = c(0.62, 0.89, 0.99, 1.95, 1.54, 2.07, 2.12,
+        2.95, 2.2, 3.8, 3.6, 3.43, 4.1, 4.94)
+)
+
+fake_model <- lm_model %>% 
+  fit(y ~ x, data=df_fake)
+
+fake_int <- summary(fake_model$fit)$coefficients["(Intercept)",1]
+fake_slope <- summary(fake_model$fit)$coefficients["x",1]
+
+segments <- perp_segment_coord(df_fake$x, df_fake$y, fake_int, fake_slope)
+segments <- as.data.frame(segments)
+
+df_fake %>% ggplot(aes(x=x, y=y)) +
+  geom_segment(data=segments, 
+               aes(x=x0, y=y0, xend=x1, yend=y1), 
+               colour=get_hurwitz_colors("viking")) +
+  geom_abline(slope=fake_slope, intercept = fake_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point()+
+  xlim(c(0,5)) + ylim(c(0,5)) +
+  labs(title="Fake Data with Regression Line",
+       subtitle="Perpendicular lines show projection to new axis")
+```
+In this case, we could ignore our original 2 variables and instead use a simplified variable: the distance along the regression line where each point projects, as indicated by the blue lines. Since the original variables ($x$ and $y$) were correlated, this new variable still captures the information pretty well.
+
+One thing to note though is that not all information is preserved. For instance the points at $(1.28, 1.95)$ and $(1.63, 1.54)$ project to nearly the same point on the regression line. So with just this 1 dimension, the difference between these points is greatly reduced.
+
+With this ideal example in mind, let's do the same to our car data. Let's add perpendicular lines connecting the regression line and the points to illustrate the new axis.
+
+```{r reg_axis, echo=FALSE}
+perp_segment <- perp_segment_coord(train$wt, train$hp, dr_int, dr_slope)
+perp_segment <- as.data.frame(perp_segment)
+
+reg_axis <- train %>% ggplot(aes(x=wt, y=hp)) +
+  geom_segment(data=perp_segment, 
+               aes(x=x0, y=y0, xend=x1, yend=y1), 
+               colour=get_hurwitz_colors("viking")) +
+  geom_abline(slope=dr_slope, intercept = dr_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Weight (1000 lb)",
+       y="Power (hp)",
+       title="Regression Line as New Axis")
+
+reg_axis
+```
+You may think, "Those are not perpendicular to the regression line!". They actually are, but because the scale on the 2 axes are so different, they don't look like it.
+
+We can visualize the same plot with both axes to the same scale, but then we can't even see the lines. The magnitude of our vertical axis is just too much greater than our horizontal axis.
+
+```{r rescaled_reg_axis, echo=FALSE, fig.height=6, fig.width=6}
+max_scale <- 1.05*(max(train$hp, train$wt))
+
+reg_axis +
+  xlim(c(0,max_scale)) +
+  ylim(c(0,max_scale)) +
+  labs(title="Equally Scaled Regression")
+```
+
+
+### The Problem of Scale
+
+Looking at the last plot, we can see that if we use this technique, then when we project the points to the regression line, the variable with smaller magnitude doesn't really seem to matter. Effectively, our new axis based on the regression line is pretty much the same as just using the `power` or $y$ axis.
+
+The reality of this can be seen in this way. The regression line and vertical axis are pretty much parallel. So, when projecting to the regression line, it is about the same as projecting just to the vertical axis, and ignoring the other variable (`weight`).
+
+So if we were to use this regression line as our new axis for dimension reduction, we would pretty much just be taking our new variable to be the `power` and ignore the `weight` variable.
+
+---
+
+### Rescaling {.tabset}
+
+While the above commentary may make it seem like this approach is doomed, it actually shows something very different. Yes, it is true that this method is sensitive to the scale of the predictors, but the scale is actually quite arbitrary.
+
+Let's look at the `weight` axis in the above plots. As noted, these are in units of 1000 lb. So a weight of 5 is actually 5000 lb, for example.
+
+I can easily adjust my data so that the $x$ axis is in units of lb, which is completely valid. But this certainly affects the scale of the axis, and also our perception of the projection to the regression line.
+
+#### Normal axis scaling
+
+```{r, echo=FALSE}
+rescaled <- train
+
+rescaled$wt <- rescaled$wt * 1000
+
+resc_model <- lm_model %>% 
+  fit(hp ~ wt, data=rescaled)
+
+resc_int <- summary(resc_model$fit)$coefficients["(Intercept)",1]
+resc_slope <- summary(resc_model$fit)$coefficients["wt",1]
+
+resc_segments <- perp_segment_coord(rescaled$wt, rescaled$hp,
+                                    resc_int, resc_slope)
+resc_segments <- as.data.frame(resc_segments)
+
+resc_plot <- rescaled %>% ggplot(aes(x=wt, y=hp)) +
+  geom_segment(data=resc_segments, 
+               aes(x=x0, y=y0, xend=x1, yend=y1), 
+               colour=get_hurwitz_colors("viking")) +
+  geom_abline(slope=resc_slope, intercept = resc_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Weight (lb)",
+       y="Power (hp)",
+       title="Regression Line as New Axis, Rescaled Weight",
+       subtitle="Lines are perpindicular to regression line")
+
+resc_plot
+```
+#### Equal Axis Scales
+
+```{r eq_axes, echo=FALSE, fig.height=6, fig.width=6}
+max_scale_resc <- max(rescaled$wt, rescaled$hp)
+
+resc_plot +
+  xlim(c(0, max_scale_resc)) +
+  ylim(c(0, max_scale_resc)) +
+  labs(subtitle="",
+       title="Rescaled Weight, Axes Scaled Equally")
+```
+### {-}
+
+Now, instead of the lines that are perpendicular to the regression line looking horizontal, they look vertical. This is because the $x$ axis now has greater magnitude.
+
+Additionally, the regression line is more parallel to the $x$ axis. So if we were to project onto this regression line, our new variable would mostly reflect the `weight` as a predictor.
+
+This shows that the scaling of the axis is arbitrary, but strongly affects how our predictor variables would be represented in a new variable based on projection to a regression line.
+
+## Rescaling
+
+The reason that when the fake data were projected to the new axis (regression line) worked so well is that I intentionally gave each variable a similar scale (0 to 5).
+
+So, in order to make this proposed method of dimension reduction work, we need to ensure that each variable is equally scaled.We can rest assured that this is okay, since we have already demonstrated that scale is arbitrary ($1000 lb$ vs $lb$).
+
+We could, for instance, pick a value for each variable by which we would divide each value. By choosing the right number for each, they could have the same scale. But how would you choose this value? Trial and error? Spray and pray?
+
+There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. Let's take a look at the results of this.
+
+```{r norm, echo=FALSE, fig.height=5, fig.width=5}
+norm <- train
+
+norm$hp <- norm$hp / sd(norm$hp)
+norm$wt <- norm$wt / sd(norm$wt)
+
+norm_max <- norm %>% select(hp, wt) %>% max()
+
+norm_model <- lm_model %>% 
+  fit(hp ~ wt, data=norm)
+
+norm_int <- summary(norm_model$fit)$coefficients["(Intercept)",1]
+norm_slope <- summary(norm_model$fit)$coefficients["wt",1]
+
+norm_segments <- perp_segment_coord(norm$wt, norm$hp,
+                                    norm_int, norm_slope)
+norm_segments <- as.data.frame(norm_segments)
+
+norm_plot <- norm %>% ggplot(aes(x=wt, y=hp)) +
+  geom_segment(data=norm_segments, 
+               aes(x=x0, y=y0, xend=x1, yend=y1), 
+               colour=get_hurwitz_colors("viking")) +
+  geom_abline(slope=norm_slope, intercept = norm_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Rescaled Weight",
+       y="Rescaled Power",
+       title="Rescaled Variables",
+       subtitle="Each variable has been divided by its standard deviation") +
+  lims(x=c(0, norm_max), y=c(0, norm_max))
+
+norm_plot
+```
+
