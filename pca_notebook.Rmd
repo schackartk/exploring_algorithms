@@ -15,6 +15,8 @@ library(stringr)
 library(tibble)
 library(tidyr)
 
+source("helpers.R")
+
 theme_set(theme_light() +
           theme(plot.title = element_text(hjust=0.5),
                 plot.subtitle = element_text(hjust=0.5)))
@@ -237,13 +239,6 @@ To see how far along the regression line a point lies, we can draw a line segmen
 Before we try this with our dataset, let me illustrate the idea with some made up data.
 
 ```{r perps, echo=FALSE, fig.height=6, fig.width=6}
-perp_segment_coord <- function(x0, y0, int, slp){
-  # finds endpoint for a perpendicular segment from the point (x0,y0) to the line
-  x1 <- (x0 + slp*(y0 - int))/(1 + slp^2)
-  y1 <- slp*x1 + int
-  list(x0=x0, y0=y0, x1=x1, y1=y1)
-}
-
 df_fake <- tibble(
   x = c(0.23, 0.71, 1.02, 1.28, 1.63, 1.87, 1.98,
         2.34, 2.8, 3.2, 3.56, 3.9, 4.5, 4.65),
@@ -257,8 +252,7 @@ fake_model <- lm_model %>%
 fake_int <- summary(fake_model$fit)$coefficients["(Intercept)",1]
 fake_slope <- summary(fake_model$fit)$coefficients["x",1]
 
-segments <- perp_segment_coord(df_fake$x, df_fake$y, fake_int, fake_slope)
-segments <- as.data.frame(segments)
+segments <- perp_segment_coord(df_fake$x, df_fake$y, fake_int, fake_slope) %>% as.data.frame()
 
 df_fake %>% ggplot(aes(x=x, y=y)) +
   geom_segment(data=segments, 
@@ -279,17 +273,7 @@ One thing to note though is that not all information is preserved. For instance 
 With this ideal example in mind, let's do the same to our car data. Let's add perpendicular lines connecting the regression line and the points to illustrate the new axis.
 
 ```{r reg_axis, echo=FALSE}
-perp_segment <- perp_segment_coord(train$wt, train$hp, dr_int, dr_slope)
-perp_segment <- as.data.frame(perp_segment)
-
-reg_axis <- train %>% ggplot(aes(x=wt, y=hp)) +
-  geom_segment(data=perp_segment, 
-               aes(x=x0, y=y0, xend=x1, yend=y1), 
-               colour=get_hurwitz_colors("viking")) +
-  geom_abline(slope=dr_slope, intercept = dr_int,
-              color=get_hurwitz_colors("light_gray"),
-              size=1) +
-  geom_point(color=get_hurwitz_colors("red")) +
+reg_axis <- train %>% plot_perp() +
   labs(x="Weight (1000 lb)",
        y="Power (hp)",
        title="Regression Line as New Axis")
@@ -335,24 +319,7 @@ rescaled <- train
 
 rescaled$wt <- rescaled$wt * 1000
 
-resc_model <- lm_model %>% 
-  fit(hp ~ wt, data=rescaled)
-
-resc_int <- summary(resc_model$fit)$coefficients["(Intercept)",1]
-resc_slope <- summary(resc_model$fit)$coefficients["wt",1]
-
-resc_segments <- perp_segment_coord(rescaled$wt, rescaled$hp,
-                                    resc_int, resc_slope)
-resc_segments <- as.data.frame(resc_segments)
-
-resc_plot <- rescaled %>% ggplot(aes(x=wt, y=hp)) +
-  geom_segment(data=resc_segments, 
-               aes(x=x0, y=y0, xend=x1, yend=y1), 
-               colour=get_hurwitz_colors("viking")) +
-  geom_abline(slope=resc_slope, intercept = resc_int,
-              color=get_hurwitz_colors("light_gray"),
-              size=1) +
-  geom_point(color=get_hurwitz_colors("red")) +
+resc_plot <- rescaled %>% plot_perp() +
   labs(x="Weight (lb)",
        y="Power (hp)",
        title="Regression Line as New Axis, Rescaled Weight",
@@ -397,28 +364,11 @@ norm$wt <- norm$wt / sd(norm$wt)
 
 norm_max <- norm %>% select(hp, wt) %>% max()
 
-norm_model <- lm_model %>% 
-  fit(hp ~ wt, data=norm)
-
-norm_int <- summary(norm_model$fit)$coefficients["(Intercept)",1]
-norm_slope <- summary(norm_model$fit)$coefficients["wt",1]
-
-norm_segments <- perp_segment_coord(norm$wt, norm$hp,
-                                    norm_int, norm_slope)
-norm_segments <- as.data.frame(norm_segments)
-
-norm_plot <- norm %>% ggplot(aes(x=wt, y=hp)) +
-  geom_segment(data=norm_segments, 
-               aes(x=x0, y=y0, xend=x1, yend=y1), 
-               colour=get_hurwitz_colors("viking")) +
-  geom_abline(slope=norm_slope, intercept = norm_int,
-              color=get_hurwitz_colors("light_gray"),
-              size=1) +
-  geom_point(color=get_hurwitz_colors("red")) +
+norm_plot <- norm %>% plot_perp() + 
   labs(x="Rescaled Weight",
        y="Rescaled Power",
        title="Rescaled Variables",
-       subtitle="Each variable has been divided by its standard deviation") +
+       subtitle="Variables divided by its standard deviation") +
   lims(x=c(0, norm_max), y=c(0, norm_max))
 
 norm_plot
