@@ -9,7 +9,9 @@ output: html_notebook
 library(caret)
 library(dplyr)
 library(ggplot2)
-library(hurwitzLab)
+library(gridExtra)  # Side by side plots
+library(hurwitzLab) # Color palettes
+library(MethComp)   # Deming regression
 library(parsnip)
 library(stringr)
 library(tibble)
@@ -128,9 +130,9 @@ train %>% ggplot(aes(x=hp, y=mpg)) +
 ```
 ### {-}
 
-Between these two regressions, weight seems a better predictor than power.
+Between these two regressions (click the tabs), weight looks like it may be a better predictor than power based on $r^2$.
 
-Wouldn't it be nice to have a model that creates a regression on both at the sametime?
+Wouldn't it be nice to have a model that creates a regression on both at the same time?
 
 ---
 
@@ -150,8 +152,6 @@ Where:
 
 After performing this fit, here is the resulting MLR. 
 
-x1 is $x_1$ and x2 is $x_2$.
-
 ```{r regression, echo=FALSE}
 lm_fit <- lm_model %>% 
   fit(mpg ~ ., data=train)
@@ -161,7 +161,7 @@ m2 <- round(summary(lm_fit$fit)$coefficients["hp",1], 2)
 b <- round(summary(lm_fit$fit)$coefficients["(Intercept)",1], 2)
 rsq <- round(summary(lm_fit$fit)$adj.r.squared, digits = 3)
 
-print(str_glue("y = {m1}x1 + {m2}x2 + {b}"))
+print(str_glue("y = {m1}*weight + {m2}*hp + {b}"))
 print(str_glue("r squared = {rsq}"))
 ```
 
@@ -238,7 +238,7 @@ To see how far along the regression line a point lies, we can draw a line segmen
 
 Before we try this with our dataset, let me illustrate the idea with some made up data.
 
-```{r perps, echo=FALSE, fig.height=6, fig.width=6}
+```{r perps, echo=FALSE, fig.height=5, fig.width=5}
 df_fake <- tibble(
   x = c(0.23, 0.71, 1.02, 1.28, 1.63, 1.87, 1.98,
         2.34, 2.8, 3.2, 3.56, 3.9, 4.5, 4.65),
@@ -284,7 +284,7 @@ You may think, "Those are not perpendicular to the regression line!". They actua
 
 We can visualize the same plot with both axes to the same scale, but then we can't even see the lines. The magnitude of our vertical axis is just too much greater than our horizontal axis.
 
-```{r rescaled_reg_axis, echo=FALSE, fig.height=6, fig.width=6}
+```{r rescaled_reg_axis, echo=FALSE, fig.height=5, fig.width=5}
 max_scale <- 1.05*(max(train$hp, train$wt))
 
 reg_axis +
@@ -329,7 +329,7 @@ resc_plot
 ```
 #### Equal Axis Scales
 
-```{r eq_axes, echo=FALSE, fig.height=6, fig.width=6}
+```{r eq_axes, echo=FALSE, fig.height=5, fig.width=5}
 max_scale_resc <- max(rescaled$wt, rescaled$hp)
 
 resc_plot +
@@ -374,3 +374,255 @@ norm_plot <- norm %>% plot_perp() +
 norm_plot
 ```
 
+
+---
+
+### Replotting
+
+Now that the data are rescaled, the projections to the regression line are looking good!
+
+Going back to the overall goal: we are trying to create a regression model to predict `mpg` based on a single variable that captures the information of the 2 original variables `weight` and `power`.
+
+To do this, I will create a new variable which I will call `reg`, which is the distance along the regression line where each point projects. This can be seen as the where the blue lines touch the regression line in the plot above.
+
+For now, I am doing this based on geometry (read pythagorean theorem).
+
+So now, each point is represented by the single variable `reg`. We can plot this variable against `mpg` since this is the variable we want to predict based on our new single predictor variable, `reg`.
+
+```{r rot, echo=FALSE}
+df_rot <- train %>% plot_reg_coord()
+
+rot_plot <- df_rot %>% ggplot(aes(x=x, y=mpg)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="New variable, reg",
+       y="Fuel Efficiency (mpg)",
+       title="Fuel Efficiency vs New Variable")
+
+rot_plot
+```
+
+We can now perform a linear regression on the above plot to see how well our new variable predicts `fuel efficiency`.
+
+It is actually impressive! We have reduced the number of predictor variables, yet the correlation is the same as or stronger than:
+
+* Linear regression based on `power` ($r^2=0.611$)
+* Linear regression based on `weight` ($r^2=0.691$)
+* Multilinear regression based on both `weight` and `hp` ($r^2=0.784$)
+
+Of course, this is only a single observation, so we can't be sure if the improvement is significant. Still, it is interesting.
+
+```{r, echo=FALSE}
+rot_fit <- lm_model %>% 
+  fit(mpg ~ x, data=df_rot)
+
+intercept <- summary(rot_fit$fit)$coefficients["(Intercept)",1]
+slope <- summary(rot_fit$fit)$coefficients["x",1]
+
+reg_rs <- round(summary(rot_fit$fit)$adj.r.squared, digits = 3)
+  
+df_rot %>% ggplot(aes(x=x, y=mpg)) +
+  geom_abline(slope=slope, intercept=intercept,
+                color=get_hurwitz_colors("light_gray"),
+                size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="New variable, reg",
+       y="Fuel Efficiency (mpg)",
+       title="Fuel Efficiency vs New Variable",
+       subtitle=str_glue("r squared = {reg_rs}"))
+    
+```
+## Orthogonal Regression
+
+### New Coordinate System
+
+To review: our new variable `reg` is the projection of our data onto a linear
+regression line of the re-scaled `weight` and `hp` variables. This regression
+was performed using ordinary least-squares, which minimizes the errors in the
+$y$ direction.
+
+So far, we have only looked at the single new variable, represented by the
+projection. But even in this new coordinate system, we can look at it as
+having 2 dimensions:
+
+* $x$: regression line axis
+* $y$: axis perpendicular to regression line.
+
+The new $y$ axis coordinate can be seen as the distance a point is from the new
+$x$ axis, the regression line. These distances are shown in blue here.
+
+```{r, echo=FALSE, fig.width=5, fig.height=5}
+norm_plot
+```
+
+We can plot the same points in this new *rotated* coordinate system.
+
+I will now refer to the regression axis as `reg1` and the perpendicular axis
+as `reg2`.
+
+```{r, echo=FALSE}
+rot_plot <- df_rot %>% ggplot(aes(x=x, y=y)) +
+  geom_hline(yintercept=0, color="lightgray", size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="reg1",
+       y="reg2",
+       title="Rotated Coordinate System Plot")
+
+rot_plot
+```
+
+---
+
+### Persistent Correlation
+
+It may (or may not) seem odd that these new variables are still correlated!
+
+The strangeness may be more apparent when you think about why we took this
+approach in the first place. We realized our variables were correlated,
+so a projection to a regression line summarized both variables pretty well.
+Apparently, we could do this same process again. And again..
+
+Clearly, these variables are less correlated though
+than the original variables (`weight` and `hp`). We would expect this to be the
+case because *the regression on the original variables should have had points
+distributed evenly above and below the regression line.* After all, isn't that
+the whole idea of regression?
+
+So given that last fact, why are they still correlated?
+
+It mostly comes down to how we performed the regression. As mentioned, we used
+ordinary least-squares regression, which minimized the vertical errors. By 
+contrast, it did not minimize the real (perpendicular) distances from the
+regression line.
+
+This is problematic in a few ways: 
+
+* Firstly, it means that this method is
+dependent on which variable you put on which axis when performing regression.
+This is undesirable, because you have to be cautious and choosy to get the "best"
+results. Imagine brute-force comparing thousands of variable order combinations!
+* Second, it means that our new variables are still (potentially)
+correlated. This seems harmless, but it opens the idea of, why not do the method
+again. When do you decide to stop?
+
+---
+
+### Orthogonal Regression {.tabset}
+
+One way around this is to perform a different kind of linear regression.
+Orthogonal (*a.k.a* total least-square or Deming) regression minimizes the
+errors orthogonal (perpendicular) to the regression line.
+
+Below, I have shown both types of regression. The errors which are minimized for
+each method are shown in blue. I have also performed the projection to the
+different regression lines, and plotted the data in the new coordinate system.
+
+#### Regressions
+
+It is apparent that the regression lines are very different in each case.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+dem_fit <- Deming(norm$wt, norm$hp)
+
+norm_fit <- lm_model %>% 
+  fit(hp ~ wt, data=norm)
+
+demi_intercept <- dem_fit["Intercept"]
+demi_slope <- dem_fit["Slope"]
+
+intercept <- summary(norm_fit$fit)$coefficients["(Intercept)",1]
+slope <- summary(norm_fit$fit)$coefficients["wt",1]
+
+demi_segments <- perp_segment_coord(norm$wt, norm$hp, demi_intercept, demi_slope) %>% 
+  as.data.frame()
+
+plot <- norm %>% ggplot(aes(x=wt, y=hp)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="Rescaled Weight",
+       y="Rescaled Power")
+
+ord_plot <- plot +
+  geom_abline(slope=slope, intercept=intercept,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_segment(aes(xend=wt, yend=hp-norm_fit$fit$residuals),
+               colour=get_hurwitz_colors("viking")) +
+  labs(title="Ordinary Regression")
+
+deming_plot <- plot +
+  geom_abline(slope=demi_slope, intercept=demi_intercept,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_segment(data=demi_segments, 
+               aes(x=x0, y=y0, xend=x1, yend=y1), 
+               colour=get_hurwitz_colors("viking")) +
+  labs(title="Orthogonal Regression",
+       y="")
+
+grid.arrange(ord_plot, deming_plot, ncol=2)
+
+```
+
+#### New Coordinates
+
+We can see that the new coordinates based on orthogonal regression are 
+uncorrelated as indicated by the nearly horizontal regression line
+and $r^2=0$. The variables based on ordinary regression are only weakly correlated, but the regression line is obviously not horizontal.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+rot_fit2 <- lm_model %>% 
+  fit(y ~ x, data=df_rot)
+
+intercept <- summary(rot_fit2$fit)$coefficients["(Intercept)",1]
+slope <- summary(rot_fit2$fit)$coefficients["x",1]
+
+rot_rs <- round(summary(rot_fit2$fit)$r.squared, digits = 3)
+
+rot_plot <- df_rot %>% ggplot(aes(x=x, y=y)) +
+  geom_abline(slope=slope, intercept=intercept,
+              color=get_hurwitz_colors("light_gray"),
+              size=1, alpha=0.5) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="reg1",
+       y="reg2",
+       title="Rotated Ordinary Regression",
+       subtitle=str_glue("r square = {rot_rs}"))
+
+demi_rot_df <- norm
+
+demi_rot_df <- demi_rot_df %>% add_column(
+  x = sqrt((demi_segments$x1)^2 + (demi_segments$y1 - demi_intercept)^2),
+  y = sqrt(
+    (demi_segments$x1 - demi_segments$x0)^2 +
+      (demi_segments$y1 - demi_segments$y0)^2))
+
+demi_rot_df <- demi_rot_df %>% mutate(x = case_when(
+  demi_segments$x1 < 0 ~ -x,
+  demi_segments$x1 >= 0 ~ x
+)) %>% 
+  mutate(y = case_when(
+    demi_segments$y0 < demi_segments$y1 ~ -y,
+    demi_segments$y0 >= demi_segments$y1 ~ y
+  ))
+
+demi_rot_fit <- lm_model %>% 
+  fit(y ~ x, data=demi_rot_df)
+
+demi_rot_int <- summary(demi_rot_fit$fit)$coefficients["(Intercept)",1]
+demi_rot_slope <- summary(demi_rot_fit$fit)$coefficients["x",1]
+
+demi_rot_rs <- round(summary(demi_rot_fit$fit)$r.squared, digits = 3)
+
+demi_rot_plot <- demi_rot_df %>% ggplot(aes(x=x, y=y)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  geom_abline(slope=demi_rot_slope, intercept=demi_rot_int,
+            color=get_hurwitz_colors("light_gray"),
+            size=1, alpha=0.5) +
+  labs(x="ortho1",
+       y="ortho2",
+       title="Rotated Orthogonal Regression",
+       subtitle=str_glue("r square = {demi_rot_rs}"))
+
+grid.arrange(rot_plot, demi_rot_plot, ncol=2)
+```
+
+### {-}
