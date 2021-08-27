@@ -31,3 +31,40 @@ plot_perp <- function(df){
   
   plot
 }
+
+plot_reg_coord <- function(df){
+  df$wt <- df$wt / sd(df$wt)
+  df$hp <- df$hp / sd(df$hp)
+  
+  lm_model <- linear_reg() %>% 
+    set_engine("lm") %>% 
+    set_mode("regression")
+  
+  lm_fit <- lm_model %>% 
+    fit(hp ~ wt, data=df)
+  
+  intercept <- summary(lm_fit$fit)$coefficients["(Intercept)",1]
+  slope <- summary(lm_fit$fit)$coefficients["wt",1]
+  
+  segments <- perp_segment_coord(df$wt, df$hp, intercept, slope) %>% 
+    as.data.frame()
+  
+  rot_df <- df
+  
+  rot_df <- rot_df %>% add_column(
+    x = sqrt((segments$x1)^2 + (segments$y1 - intercept)^2),
+    y = sqrt(
+      (segments$x1 - segments$x0)^2 +
+        (segments$y1 - segments$y0)^2))
+  
+  rot_df <- rot_df %>% mutate(x = case_when(
+    segments$x1 < 0 ~ -x,
+    segments$x1 >= 0 ~ x
+  )) %>% 
+    mutate(y = case_when(
+      segments$y0 < segments$y1 ~ -y,
+      segments$y0 >= segments$y1 ~ y
+    ))
+  
+  rot_df
+}
