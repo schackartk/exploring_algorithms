@@ -13,6 +13,7 @@ library(gridExtra)  # Side by side plots
 library(hurwitzLab) # Color palettes
 library(MethComp)   # Deming regression
 library(parsnip)
+library(purrr)      #map
 library(stringr)
 library(tibble)
 library(tidyr)
@@ -103,7 +104,7 @@ hp_model <- lm_model %>%
 #### Weight
 
 ```{r wt_model, echo=FALSE}
-wt_rs <- round(summary(wt_model$fit)$adj.r.squared, digits = 3)
+wt_rs <- round(summary(wt_model$fit)$r.squared, digits = 3)
 
 train %>% ggplot(aes(x=wt, y=mpg)) +
   geom_smooth(method="lm", se=FALSE,
@@ -117,7 +118,7 @@ train %>% ggplot(aes(x=wt, y=mpg)) +
 #### Power
 
 ```{r hp_model, echo=FALSE}
-hp_rs <- round(summary(hp_model$fit)$adj.r.squared, digits = 3)
+hp_rs <- round(summary(hp_model$fit)$r.squared, digits = 3)
 
 train %>% ggplot(aes(x=hp, y=mpg)) +
   geom_smooth(method="lm", se=FALSE,
@@ -159,7 +160,7 @@ lm_fit <- lm_model %>%
 m1 <- round(summary(lm_fit$fit)$coefficients["wt",1], 2)
 m2 <- round(summary(lm_fit$fit)$coefficients["hp",1], 2)
 b <- round(summary(lm_fit$fit)$coefficients["(Intercept)",1], 2)
-rsq <- round(summary(lm_fit$fit)$adj.r.squared, digits = 3)
+rsq <- round(summary(lm_fit$fit)$r.squared, digits = 3)
 
 print(str_glue("y = {m1}*weight + {m2}*hp + {b}"))
 print(str_glue("r squared = {rsq}"))
@@ -344,7 +345,10 @@ Now, instead of the lines that are perpendicular to the regression line looking 
 
 Additionally, the regression line is more parallel to the $x$ axis. So if we were to project onto this regression line, our new variable would mostly reflect the `weight` as a predictor.
 
-This shows that the scaling of the axis is arbitrary, but strongly affects how our predictor variables would be represented in a new variable based on projection to a regression line.
+*Takeaways:*
+
+* The scaling of the axes is arbitrary
+* Axis scales strongly affect how our predictor variables would be represented in a new variable based on projection to a regression line.
 
 ## Rescaling
 
@@ -354,7 +358,7 @@ So, in order to make this proposed method of dimension reduction work, we need t
 
 We could, for instance, pick a value for each variable by which we would divide each value. By choosing the right number for each, they could have the same scale. But how would you choose this value? Trial and error? Spray and pray?
 
-There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. Let's take a look at the results of this.
+There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. If the values of each variable are least kind of normally distributed, they will have similar scale. Let's take a look at the results of this.
 
 ```{r norm, echo=FALSE, fig.height=5, fig.width=5}
 norm <- train
@@ -405,11 +409,11 @@ We can now perform a linear regression on the above plot to see how well our new
 
 It is actually impressive! We have reduced the number of predictor variables, yet the correlation is the same as or stronger than:
 
-* Linear regression based on `power` ($r^2=0.611$)
-* Linear regression based on `weight` ($r^2=0.691$)
-* Multilinear regression based on both `weight` and `hp` ($r^2=0.784$)
+* Linear regression based on `power` ($r^2=0.625$)
+* Linear regression based on `weight` ($r^2=0.703$)
+* Multilinear regression based on both `weight` and `hp` ($r^2=0.8$)
 
-Of course, this is only a single observation, so we can't be sure if the improvement is significant. Still, it is interesting.
+Of course, this is only a single observation, so we can't be sure if the difference is significant. Still, it is interesting.
 
 ```{r, echo=FALSE}
 rot_fit <- lm_model %>% 
@@ -418,9 +422,9 @@ rot_fit <- lm_model %>%
 intercept <- summary(rot_fit$fit)$coefficients["(Intercept)",1]
 slope <- summary(rot_fit$fit)$coefficients["x",1]
 
-reg_rs <- round(summary(rot_fit$fit)$adj.r.squared, digits = 3)
+reg_rs <- round(summary(rot_fit$fit)$r.squared, digits = 3)
   
-df_rot %>% ggplot(aes(x=x, y=mpg)) +
+rot_plot1 <- df_rot %>% ggplot(aes(x=x, y=mpg)) +
   geom_abline(slope=slope, intercept=intercept,
                 color=get_hurwitz_colors("light_gray"),
                 size=1) +
@@ -429,7 +433,8 @@ df_rot %>% ggplot(aes(x=x, y=mpg)) +
        y="Fuel Efficiency (mpg)",
        title="Fuel Efficiency vs New Variable",
        subtitle=str_glue("r squared = {reg_rs}"))
-    
+
+rot_plot1
 ```
 ## Orthogonal Regression
 
@@ -479,7 +484,7 @@ It may (or may not) seem odd that these new variables are still correlated!
 The strangeness may be more apparent when you think about why we took this
 approach in the first place. We realized our variables were correlated,
 so a projection to a regression line summarized both variables pretty well.
-Apparently, we could do this same process again. And again..
+Since they're still correlated, we could do this same process again. And again..
 
 Clearly, these variables are less correlated though
 than the original variables (`weight` and `hp`). We would expect this to be the
@@ -489,8 +494,8 @@ the whole idea of regression?
 
 So given that last fact, why are they still correlated?
 
-It mostly comes down to how we performed the regression. As mentioned, we used
-ordinary least-squares regression, which minimized the vertical errors. By 
+It comes down to how we performed the regression. As mentioned, we used
+ordinary least-squares regression, which minimizes the vertical errors. By 
 contrast, it did not minimize the real (perpendicular) distances from the
 regression line.
 
@@ -536,7 +541,6 @@ demi_segments <- perp_segment_coord(norm$wt, norm$hp, demi_intercept, demi_slope
   as.data.frame()
 
 plot <- norm %>% ggplot(aes(x=wt, y=hp)) +
-  geom_point(color=get_hurwitz_colors("red")) +
   labs(x="Rescaled Weight",
        y="Rescaled Power")
 
@@ -546,6 +550,7 @@ ord_plot <- plot +
               size=1) +
   geom_segment(aes(xend=wt, yend=hp-norm_fit$fit$residuals),
                colour=get_hurwitz_colors("viking")) +
+  geom_point(color=get_hurwitz_colors("red")) +
   labs(title="Ordinary Regression")
 
 deming_plot <- plot +
@@ -555,6 +560,7 @@ deming_plot <- plot +
   geom_segment(data=demi_segments, 
                aes(x=x0, y=y0, xend=x1, yend=y1), 
                colour=get_hurwitz_colors("viking")) +
+  geom_point(color=get_hurwitz_colors("red")) +
   labs(title="Orthogonal Regression",
        y="")
 
@@ -565,7 +571,7 @@ grid.arrange(ord_plot, deming_plot, ncol=2)
 #### New Coordinates
 
 We can see that the new coordinates based on orthogonal regression are 
-uncorrelated as indicated by the nearly horizontal regression line
+uncorrelated as indicated by the horizontal regression line
 and $r^2=0$. The variables based on ordinary regression are only weakly correlated, but the regression line is obviously not horizontal.
 
 ```{r, echo=FALSE, fig.width=10, fig.height=4}
@@ -613,10 +619,10 @@ demi_rot_slope <- summary(demi_rot_fit$fit)$coefficients["x",1]
 demi_rot_rs <- round(summary(demi_rot_fit$fit)$r.squared, digits = 3)
 
 demi_rot_plot <- demi_rot_df %>% ggplot(aes(x=x, y=y)) +
-  geom_point(color=get_hurwitz_colors("red")) +
   geom_abline(slope=demi_rot_slope, intercept=demi_rot_int,
             color=get_hurwitz_colors("light_gray"),
             size=1, alpha=0.5) +
+  geom_point(color=get_hurwitz_colors("red")) +
   labs(x="ortho1",
        y="ortho2",
        title="Rotated Orthogonal Regression",
@@ -626,3 +632,90 @@ grid.arrange(rot_plot, demi_rot_plot, ncol=2)
 ```
 
 ### {-}
+
+---
+
+### Checking Predictor
+
+Now that we have been able to find a better regression model to project to, let's
+see how this new variable predicts fuel efficiency. For the regressions shown below ordinary least squares regression is used at this point, since we are trying to predict fuel efficiency based on our new variable. *ortho* and *ordinary* in the titles indicate the regression method used for generating the independent variable.
+
+The correlation seems to be about the same as the variable made from ordinary regression projection. While there is no obvious improvement, all the previous commentary on the benefit of orthogonal regression still holds.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+demi_reg <- lm_model %>% 
+  fit(mpg ~ x, data=demi_rot_df)
+
+demi_reg_int <- summary(demi_reg$fit)$coefficients["(Intercept)",1]
+demi_reg_slope <- summary(demi_reg$fit)$coefficients["x",1]
+
+demi_reg_rs <- round(summary(demi_reg$fit)$r.squared, digits = 3)
+
+demi_reg_plot <- demi_rot_df %>% ggplot(aes(x=x, y=mpg)) +
+  geom_abline(slope=demi_reg_slope, intercept=demi_reg_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="ortho1",
+       y="",
+       title="Ortho Projected Regression",
+       subtitle=str_glue("r square = {demi_reg_rs}"))
+
+rot_plot1 <- rot_plot1 +
+  labs(title="Ordinary Projected Regression",
+       x="reg1")
+
+grid.arrange(rot_plot1, demi_reg_plot, ncol=2)
+```
+
+## Eigenvectors
+
+So far we have explored 2 methods of finding a new axis to which we can project:
+
+* Ordinary least-squares regression
+* Orthogonal leas-squares regression
+
+We began with regressions since these intuitively follow directions of variance. However, a more efficient method is to find the eigenvectors of the covariance matrix between the variables. These eigenvectors will serve as the new axes for data projection, similar to how the regression lines were used.
+
+---
+
+Covariance Matrix
+
+```{r}
+cov_df <- cor(norm$wt, norm$hp)
+
+round(cov_df, 2)
+```
+```{r}
+eig_df <- eigen(cov_df)
+
+eig_df
+```
+```{r}
+eig_t <- t(eig_df$vectors)
+
+norm_t <- norm %>% select(wt, hp) %>% t()
+
+eig_proj <- eig_t %*% norm_t
+
+norm_eig <- t(norm_t)
+```
+```{r}
+pca_fit <- norm %>% 
+  select(-mpg) %>% 
+  prcomp(scale=FALSE, center=FALSE)
+
+pca_reg_plot <- demi_rot_df %>% ggplot(aes(y=x)) +
+  # geom_abline(slope=demi_reg_slope, intercept=demi_reg_int,
+  #             color=get_hurwitz_colors("light_gray"),
+  #             size=1) +
+  geom_point(aes(x=pca_fit$x[,1]),
+    color=get_hurwitz_colors("red")) +
+  labs(x="PC1",
+       y="mpg",
+       title="PCA Projected Regression",
+       subtitle=str_glue("r square = {}"))
+
+pca_reg_plot
+```
+
