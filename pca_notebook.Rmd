@@ -1,6 +1,7 @@
 ---
 title: "Explained: Principal Component Analysis"
 output: html_notebook
+author: Kenneth Schackart (schackartk1@gmail.com)
 ---
 
 # {.tabset}
@@ -27,9 +28,13 @@ theme_set(theme_light() +
 
 ## Intoduction
 
-### The Data
+### Overview & Purpose
 
-This document is intended to give an intuitive sense of how PCA works.
+This document is intended to give an intuitive sense of how PCA works, and why certain pre-processing steps are necessary. Many implementations of PCA provide options to perform these pre-processing steps.
+
+All analysis here is performed in R, with the help of several packages.
+
+### The Data
 
 I will be using the mtcars dataset built-in to R. For our purposes, we will only
 be looking at 3 variables: weight (`wt`), horsepower (`hp`), and mpg. Prior to
@@ -89,7 +94,6 @@ lm_model <- linear_reg() %>%
   set_mode("regression")
 ```
 
-
 Since we have 2 predictors (`weight` and `power`), then we could make 2 separate
 linear regressions, and choose whichever one has a better fit to be our predictor.
 
@@ -115,6 +119,7 @@ train %>% ggplot(aes(x=wt, y=mpg)) +
        x="Weight (1000 lb)",
        y="Fuel Efficiency (mpg)")
 ```
+
 #### Power
 
 ```{r hp_model, echo=FALSE}
@@ -129,6 +134,7 @@ train %>% ggplot(aes(x=hp, y=mpg)) +
        x="Power (hp)",
        y="Fuel Efficiency (mpg)")
 ```
+
 ### {-}
 
 Between these two regressions (click the tabs), weight looks like it may be a better predictor than power based on $r^2$.
@@ -176,7 +182,7 @@ Although our dataset already has very few predictors (2), it can be used to illu
 
 So, lets go about reducing the number of predictors from 2 to 1.
 
----
+--- 
 
 ### Correlated Predictors
 
@@ -189,6 +195,7 @@ train %>% ggplot(aes(x=wt, y=hp)) +
        y="Power (hp)",
        title="Correlated Predictors")
 ```
+
 It is quite apparent that these two predictors are correlated. As weight increases, power generally increases too.
 
 Another way to put it is that if we know the weight, we know *something* about the power, and vice-versa. Of course the relationship isn't perfect -- we cannot predict power with perfect accuracy based on weight.
@@ -221,7 +228,6 @@ train %>% ggplot(aes(x=wt, y=hp))+
        y="Power (hp)",
        title="Least-Squares Regression")
 ```
-
 
 While the fact that least-squares regression is based on "vertical" errors may seem subtle, it can have certain implications, as we will see later.
 
@@ -267,6 +273,7 @@ df_fake %>% ggplot(aes(x=x, y=y)) +
   labs(title="Fake Data with Regression Line",
        subtitle="Perpendicular lines show projection to new axis")
 ```
+
 In this case, we could ignore our original 2 variables and instead use a simplified variable: the distance along the regression line where each point projects, as indicated by the blue lines. Since the original variables ($x$ and $y$) were correlated, this new variable still captures the information pretty well.
 
 One thing to note though is that not all information is preserved. For instance the points at $(1.28, 1.95)$ and $(1.63, 1.54)$ project to nearly the same point on the regression line. So with just this 1 dimension, the difference between these points is greatly reduced.
@@ -281,6 +288,7 @@ reg_axis <- train %>% plot_perp() +
 
 reg_axis
 ```
+
 You may think, "Those are not perpendicular to the regression line!". They actually are, but because the scale on the 2 axes are so different, they don't look like it.
 
 We can visualize the same plot with both axes to the same scale, but then we can't even see the lines. The magnitude of our vertical axis is just too much greater than our horizontal axis.
@@ -293,7 +301,6 @@ reg_axis +
   ylim(c(0,max_scale)) +
   labs(title="Equally Scaled Regression")
 ```
-
 
 ### The Problem of Scale
 
@@ -339,6 +346,7 @@ resc_plot +
   labs(subtitle="",
        title="Rescaled Weight, Axes Scaled Equally")
 ```
+
 ### {-}
 
 Now, instead of the lines that are perpendicular to the regression line looking horizontal, they look vertical. This is because the $x$ axis now has greater magnitude.
@@ -377,7 +385,6 @@ norm_plot <- norm %>% plot_perp() +
 
 norm_plot
 ```
-
 
 ---
 
@@ -436,6 +443,7 @@ rot_plot1 <- df_rot %>% ggplot(aes(x=x, y=mpg)) +
 
 rot_plot1
 ```
+
 ## Orthogonal Regression
 
 ### New Coordinate System
@@ -673,49 +681,168 @@ grid.arrange(rot_plot1, demi_reg_plot, ncol=2)
 So far we have explored 2 methods of finding a new axis to which we can project:
 
 * Ordinary least-squares regression
-* Orthogonal leas-squares regression
+* Orthogonal least-squares regression
 
 We began with regressions since these intuitively follow directions of variance. However, a more efficient method is to find the eigenvectors of the covariance matrix between the variables. These eigenvectors will serve as the new axes for data projection, similar to how the regression lines were used.
 
+This process is effectively the same as the orthogonal regression projection, but is much simpler to perform, since matrix operations are more concise than performing regression and projection based on geometries.
+
+Since it pretty much the same process, we will still be computing on the scaled data, as this method is still sensitive to variable magnitude.
+
 ---
 
-Covariance Matrix
+### Calculating the Eigenvectors
 
-```{r}
-cov_df <- cor(norm$wt, norm$hp)
+Firstly, we compute the covariance matrix of our variables. For two variables, that is:
+
+\[\begin{bmatrix}Cov(x,x) & Cov(x,y)\\ 
+Cov(y,x) & Cov(y,y)\end{bmatrix}\]
+
+The main diagonal contains the variances of the individual variables since $Cov(a,a)=Var(a)$, while off-diagonal values are the covariances between variables. Notice that each individual variable has a variance of 1. This is because we have already divided by the standard deviation during rescaling.
+
+```{r cov, echo=FALSE}
+cov_df <- cov(norm %>% select(hp, wt))
 
 round(cov_df, 2)
 ```
-```{r}
+
+Next, we calculate the eigen-decomposition of the covariance matrix. This gives two eigenvalues each associated with an eigenvector. The number of eigen values and eigenvectors is always equal to the number of input variables.
+
+The largest eigenvalue represents the direction of maximum variance, which is analogous to our orthogonal regression line.
+
+```{r eigen_decomp, echo=FALSE}
 eig_df <- eigen(cov_df)
 
 eig_df
 ```
-```{r}
+
+Another great thing about this method over orthogonal regression projection is that we now have more information about our transformation. For instance, we can see the amount of variance explained by each of our new axes.
+
+The total variance is given by the sum of the eigenvalues ($\lambda$):
+\[total\ variance\ = \sum_{n=1}^{N} \lambda_i\]
+So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total variance})\]
+
+---
+
+### Projecting to the New Axes {.tabset}
+
+Now that we have the eigen-decomposition, we can project to our new axes. This again is done with matrix operations as:
+
+\[New\ data=Eigen\ vectors^T*Original\ data^T\]
+
+I will call our new axes $eig1$ and $eig2$, not to be confused with the eigen values $\lambda_1$ and $\lambda_2$.
+
+```{r eig_project, echo=FALSE, warning=FALSE}
 eig_t <- t(eig_df$vectors)
 
 norm_t <- norm %>% select(wt, hp) %>% t()
 
 eig_proj <- eig_t %*% norm_t
 
-norm_eig <- t(norm_t)
+norm_eig <- t(eig_proj) %>% as_tibble() %>% 
+  rename("eig1" = "V1",
+         "eig2" = "V2")
 ```
-```{r}
+
+Notice how our new feature space created through eigenvector projection is qualitatively identical to the orthogonal regression projection. While, the center and scale of the axes are not identical, we can see they are perfectly correlated.
+
+This shows that performing projection to an orthogonal regression line is essentially the same as projecting to the eigenvectors. So while eigenvectors and matrix operations may sound confusing, as long as the orthogonal regression projection makes sense, you can think of the eigenvector projection as just another mathematical way to do the same thing.
+
+#### New Axes
+
+```{r plot_eig, echo=FALSE, fig.width=10, fig.height=4}
+eig_plot <- norm_eig %>% ggplot(aes(x=eig1, y=eig2)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="Eigen Projected Data")
+
+grid.arrange(eig_plot, demi_rot_plot + labs(subtitle=element_blank()), ncol=2)
+``` 
+
+#### Correlation
+
+```{r eig_demi_corr, echo=FALSE, warning=FALSE}
+norm_eig$ortho1 = demi_rot_df$x
+
+demi_eig_reg <- lm_model %>% 
+  fit(eig1 ~ ortho1, data=norm_eig)
+
+demi_eig_reg_int <- summary(demi_eig_reg$fit)$coefficients["(Intercept)",1]
+demi_eig_reg_slope <- summary(demi_eig_reg$fit)$coefficients["ortho1",1]
+
+demi_eig_reg_rs <- round(summary(demi_eig_reg$fit)$r.squared, digits = 3)
+
+norm_eig %>% ggplot(aes(x=demi_rot_df$x, eig1)) +
+  geom_abline(slope=demi_eig_reg_slope,
+              intercept=demi_eig_reg_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x = "ortho1",
+       title="Eigenvector Projected vs 
+       Orthogonal Regression Projected Variables",
+       subtitle=str_glue("r squared = {demi_eig_reg_rs}"))
+```
+
+### {-}
+
+### Principal Component Analysis {.tabset}
+
+Now, for the big reveal you have all been waiting for: What we just did is ... *drumroll please* ... principal component analysis!
+
+Orthogonal regression line = dominant eigenvector direction = first principal component
+
+Orthogonal residual direction = secondary eigenvector direction = second principal component
+
+So, behind the scenes of these fancy principal component functions, they are really just projecting to the directions given by the eigenvectors, which is pretty much the same as our orthogonal regression projections.
+
+So, let's take a look at the similarities between our eigenvector projections and the principal components found using the R function, `prcomp()`.
+
+#### New Coordinates
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
 pca_fit <- norm %>% 
   select(-mpg) %>% 
   prcomp(scale=FALSE, center=FALSE)
 
-pca_reg_plot <- demi_rot_df %>% ggplot(aes(y=x)) +
-  # geom_abline(slope=demi_reg_slope, intercept=demi_reg_int,
-  #             color=get_hurwitz_colors("light_gray"),
-  #             size=1) +
-  geom_point(aes(x=pca_fit$x[,1]),
-    color=get_hurwitz_colors("red")) +
-  labs(x="PC1",
-       y="mpg",
-       title="PCA Projected Regression",
-       subtitle=str_glue("r square = {}"))
+pca_df <- tibble(
+  PC1 = pca_fit$x[,1],
+  PC2 = pca_fit$x[,2])
 
-pca_reg_plot
+norm_eig$PC1 <- pca_df$PC1
+
+pca_eig_reg <- lm_model %>% 
+  fit(PC1 ~ eig1, data=norm_eig)
+
+pca_eig_reg_int <- summary(pca_eig_reg$fit)$coefficients["(Intercept)",1]
+pca_eig_reg_slope <- summary(pca_eig_reg$fit)$coefficients["eig1",1]
+
+pca_eig_reg_rs <- round(summary(pca_eig_reg$fit)$r.squared, digits = 3)
+
+pca_plot <- pca_df %>% ggplot(aes(x=PC1, y=PC2)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="PCA Projected Data")
+
+grid.arrange(pca_plot, eig_plot, ncol=2)
 ```
 
+#### Correlation
+
+```{r, echo=FALSE}
+pca_eig_plot <- norm_eig %>% ggplot(aes(x=eig1)) +
+  geom_abline(slope=pca_eig_reg_slope,
+              intercept=pca_eig_reg_int,
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(aes(y=pca_fit$x[,1]),
+    color=get_hurwitz_colors("red")) +
+  labs(x="eig1",
+       y="PC1",
+       title="PCA vs Eigenvector Projected Variables",
+       subtitle=str_glue("r square = {pca_eig_reg_rs}"))
+
+pca_eig_plot
+```
+
+### {-}
+
+# {-}
