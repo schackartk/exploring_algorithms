@@ -57,7 +57,19 @@ plot_perp <- function(df, x, y){
   plot
 }
 
-plot_reg_coord <- function(df, x, y){
+
+#' reg_coord
+#' Project data to ordinary least-squares regression line
+#'
+#' @param df Dataframe
+#' @param x X-axis for lm()
+#' @param y Y-axis for lm()
+#'
+#' @return Rotated df
+#' @export
+#'
+#' @examples
+reg_coord <- function(df, x, y){
   df[,x] <- df[,x] / sd(df[,x])
   df[,y] <- df[,y] / sd(df[,y])
   
