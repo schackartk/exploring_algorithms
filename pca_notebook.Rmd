@@ -7,6 +7,7 @@ author: Kenneth Schackart (schackartk1@gmail.com)
 # {.tabset}
 
 ```{r setup, include=FALSE}
+library(broom)      # tidy
 library(caret)
 library(dplyr)
 library(ggplot2)
@@ -56,7 +57,7 @@ train
 
 ### Sample Plot
 
-```{r raw_plot, echo=FALSE}
+```{r raw_plot, echo=FALSE, include=FALSE}
 train %>% ggplot(aes(x=wt, y=hp, color=mpg)) +
   geom_smooth(method="lm", se=FALSE,
               color=get_hurwitz_colors("light_gray")) +
@@ -98,24 +99,25 @@ Since we have 2 predictors (`weight` and `power`), then we could make 2 separate
 linear regressions, and choose whichever one has a better fit to be our predictor.
 
 ```{r multiple_regressions, echo=FALSE}
-wt_model <- lm_model %>% 
-  fit(mpg ~ wt, data=train)
+reg <- list()
+plt <- list()
 
-hp_model <- lm_model %>% 
-  fit(mpg ~ hp, data=train)
+reg$mpg_wt <- lm_model %>% fit(mpg ~ wt, data=train) 
+  
+reg$mpg_hp <- lm_model %>% fit(mpg ~ hp, data=train)
 ```
 
 #### Weight
 
 ```{r wt_model, echo=FALSE}
-wt_rs <- round(summary(wt_model$fit)$r.squared, digits = 3)
-
 train %>% ggplot(aes(x=wt, y=mpg)) +
-  geom_smooth(method="lm", se=FALSE,
-              color=get_hurwitz_colors("light_gray")) +
+  geom_abline(slope=get_coef(reg$mpg_wt, "wt"),
+              intercept=get_coef(reg$mpg_wt),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(title="MPG vs Weight",
-       subtitle=str_glue("r squared = {wt_rs}"),
+       subtitle=str_glue("r squared = {get_rsq(reg$mpg_wt, 3)}"),
        x="Weight (1000 lb)",
        y="Fuel Efficiency (mpg)")
 ```
@@ -123,14 +125,14 @@ train %>% ggplot(aes(x=wt, y=mpg)) +
 #### Power
 
 ```{r hp_model, echo=FALSE}
-hp_rs <- round(summary(hp_model$fit)$r.squared, digits = 3)
-
 train %>% ggplot(aes(x=hp, y=mpg)) +
-  geom_smooth(method="lm", se=FALSE,
-              color=get_hurwitz_colors("light_gray")) +
+  geom_abline(slope=get_coef(reg$mpg_hp, "hp"),
+              intercept=get_coef(reg$mpg_hp),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(title="MPG vs Power",
-       subtitle=str_glue("r squared = {hp_rs}"),
+       subtitle=str_glue("r squared = {get_rsq(reg$mpg_hp, 3)}"),
        x="Power (hp)",
        y="Fuel Efficiency (mpg)")
 ```
@@ -160,16 +162,17 @@ Where:
 After performing this fit, here is the resulting MLR. 
 
 ```{r regression, echo=FALSE}
-lm_fit <- lm_model %>% 
+reg$mpg_all <-  lm_model %>% 
   fit(mpg ~ ., data=train)
 
-m1 <- round(summary(lm_fit$fit)$coefficients["wt",1], 2)
-m2 <- round(summary(lm_fit$fit)$coefficients["hp",1], 2)
-b <- round(summary(lm_fit$fit)$coefficients["(Intercept)",1], 2)
-rsq <- round(summary(lm_fit$fit)$r.squared, digits = 3)
-
-print(str_glue("y = {m1}*weight + {m2}*hp + {b}"))
-print(str_glue("r squared = {rsq}"))
+print(str_glue("y =",
+               "{round(get_coef(reg$mpg_all, 'wt'), 2)}*weight",
+               " + ",
+               "{round(get_coef(reg$mpg_all, 'hp'), 2)}*hp",
+               " + ",
+               "{round(get_coef(reg$mpg_all), 2)}"))
+print(str_glue("r squared = ",
+               "{get_rsq(reg$mpg_all, 3)}"))
 ```
 
 We can see that this is a better model than either of the individual linear regressions.
@@ -209,18 +212,16 @@ One way that we can see the correlation is with least-squares regression. This i
 Least-squares regression finds the line that minimizes the magnitude of the errors. But is it important to note that it is defining errors based only on the $y$ values, i.e. the difference between the actual $y$ values and the predicted $y$ values. These errors can be visualized as vertical lines.
 
 ```{r pred_reg, echo=FALSE}
-dr_model <- lm_model %>% 
+reg$hp_wt <- lm_model %>% 
   fit(hp ~ wt, data=train)
-
-dr_int <- summary(dr_model$fit)$coefficients["(Intercept)",1]
-dr_slope <- summary(dr_model$fit)$coefficients["wt",1]
 ```
 
 ```{r vert_bars, echo=FALSE}
 train %>% ggplot(aes(x=wt, y=hp))+
-  geom_segment(aes(xend=wt, yend=hp-dr_model$fit$residuals),
+  geom_segment(aes(xend=wt, yend=hp - reg$hp_wt$fit$residuals),
                colour=get_hurwitz_colors("viking")) +
-  geom_abline(slope=dr_slope, intercept = dr_int,
+  geom_abline(slope=get_coef(reg$hp_wt, "wt"),
+              intercept=get_coef(reg$hp_wt),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
@@ -253,25 +254,28 @@ df_fake <- tibble(
         2.95, 2.2, 3.8, 3.6, 3.43, 4.1, 4.94)
 )
 
-fake_model <- lm_model %>% 
+reg$ideal <- lm_model %>% 
   fit(y ~ x, data=df_fake)
 
-fake_int <- summary(fake_model$fit)$coefficients["(Intercept)",1]
-fake_slope <- summary(fake_model$fit)$coefficients["x",1]
-
-segments <- perp_segment_coord(df_fake$x, df_fake$y, fake_int, fake_slope) %>% as.data.frame()
+segments <- perp_segment_coord(df_fake$x, df_fake$y,
+                               get_coef(reg$ideal),
+                               get_coef(reg$ideal, "x")) %>%
+  as.data.frame()
 
 df_fake %>% ggplot(aes(x=x, y=y)) +
   geom_segment(data=segments, 
                aes(x=x0, y=y0, xend=x1, yend=y1), 
                colour=get_hurwitz_colors("viking")) +
-  geom_abline(slope=fake_slope, intercept = fake_int,
+  geom_abline(slope=get_coef(reg$ideal, "x"),
+              intercept=get_coef(reg$ideal),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
   geom_point()+
   xlim(c(0,5)) + ylim(c(0,5)) +
   labs(title="Fake Data with Regression Line",
        subtitle="Perpendicular lines show projection to new axis")
+
+rm(segments)
 ```
 
 In this case, we could ignore our original 2 variables and instead use a simplified variable: the distance along the regression line where each point projects, as indicated by the blue lines. Since the original variables ($x$ and $y$) were correlated, this new variable still captures the information pretty well.
@@ -281,12 +285,12 @@ One thing to note though is that not all information is preserved. For instance 
 With this ideal example in mind, let's do the same to our car data. Let's add perpendicular lines connecting the regression line and the points to illustrate the new axis.
 
 ```{r reg_axis, echo=FALSE}
-reg_axis <- train %>% plot_perp() +
+plt$hp_wt <- train %>% plot_perp(x="wt", y="hp") +
   labs(x="Weight (1000 lb)",
        y="Power (hp)",
        title="Regression Line as New Axis")
 
-reg_axis
+plt$hp_wt
 ```
 
 You may think, "Those are not perpendicular to the regression line!". They actually are, but because the scale on the 2 axes are so different, they don't look like it.
@@ -296,10 +300,12 @@ We can visualize the same plot with both axes to the same scale, but then we can
 ```{r rescaled_reg_axis, echo=FALSE, fig.height=5, fig.width=5}
 max_scale <- 1.05*(max(train$hp, train$wt))
 
-reg_axis +
+plt$hp_wt +
   xlim(c(0,max_scale)) +
   ylim(c(0,max_scale)) +
   labs(title="Equally Scaled Regression")
+
+rm(max_scale)
 ```
 
 ### The Problem of Scale
@@ -323,28 +329,28 @@ I can easily adjust my data so that the $x$ axis is in units of lb, which is com
 #### Normal axis scaling
 
 ```{r, echo=FALSE}
-rescaled <- train
+train$wt_lb <- train$wt * 1000
 
-rescaled$wt <- rescaled$wt * 1000
-
-resc_plot <- rescaled %>% plot_perp() +
+plt$hp_wt_lb <- train %>% plot_perp(x="wt_lb", y="hp") +
   labs(x="Weight (lb)",
        y="Power (hp)",
        title="Regression Line as New Axis, Rescaled Weight",
        subtitle="Lines are perpindicular to regression line")
 
-resc_plot
+plt$hp_wt_lb
 ```
 #### Equal Axis Scales
 
 ```{r eq_axes, echo=FALSE, fig.height=5, fig.width=5}
-max_scale_resc <- max(rescaled$wt, rescaled$hp)
+max_scale <- max(train$wt_lb, train$hp)
 
-resc_plot +
-  xlim(c(0, max_scale_resc)) +
-  ylim(c(0, max_scale_resc)) +
+plt$hp_wt_lb +
+  xlim(c(0, max_scale)) +
+  ylim(c(0, max_scale)) +
   labs(subtitle="",
        title="Rescaled Weight, Axes Scaled Equally")
+
+rm(max_scale)
 ```
 
 ### {-}
@@ -369,21 +375,21 @@ We could, for instance, pick a value for each variable by which we would divide 
 There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. If the values of each variable are least kind of normally distributed, they will have similar scale. Let's take a look at the results of this.
 
 ```{r norm, echo=FALSE, fig.height=5, fig.width=5}
-norm <- train
+train$hp_norm <- train$hp / sd(train$hp)
+train$wt_norm <- train$wt / sd(train$wt)
 
-norm$hp <- norm$hp / sd(norm$hp)
-norm$wt <- norm$wt / sd(norm$wt)
+max_scale <- train %>% select(hp_norm, wt_norm) %>% max()
 
-norm_max <- norm %>% select(hp, wt) %>% max()
-
-norm_plot <- norm %>% plot_perp() + 
+plt$hp_norm_wt_norm <- train %>% plot_perp(x="wt_norm", y="hp_norm") + 
   labs(x="Rescaled Weight",
        y="Rescaled Power",
        title="Rescaled Variables",
        subtitle="Variables divided by its standard deviation") +
-  lims(x=c(0, norm_max), y=c(0, norm_max))
+  lims(x=c(0, max_scale), y=c(0, max_scale))
 
-norm_plot
+plt$hp_norm_wt_norm
+
+rm(max_scale)
 ```
 
 ---
@@ -400,16 +406,18 @@ For now, I am doing this based on geometry (read pythagorean theorem).
 
 So now, each point is represented by the single variable `reg`. We can plot this variable against `mpg` since this is the variable we want to predict based on our new single predictor variable, `reg`.
 
-```{r rot, echo=FALSE}
-df_rot <- train %>% plot_reg_coord()
+```{r rot, echo=FALSE, include=FALSE}
+train <- train %>% plot_reg_coord(x="wt_norm", y="hp_norm") %>% 
+  left_join(train) %>% 
+  rename("reg1"=x, "reg2"=y)
 
-rot_plot <- df_rot %>% ggplot(aes(x=x, y=mpg)) +
+plt$mpg_reg1 <- train %>% ggplot(aes(x=reg1, y=mpg)) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(x="New variable, reg",
        y="Fuel Efficiency (mpg)",
        title="Fuel Efficiency vs New Variable")
 
-rot_plot
+plt$mpg_reg1
 ```
 
 We can now perform a linear regression on the above plot to see how well our new variable predicts `fuel efficiency`.
@@ -423,25 +431,22 @@ It is actually impressive! We have reduced the number of predictor variables, ye
 Of course, this is only a single observation, so we can't be sure if the difference is significant. Still, it is interesting.
 
 ```{r, echo=FALSE}
-rot_fit <- lm_model %>% 
-  fit(mpg ~ x, data=df_rot)
-
-intercept <- summary(rot_fit$fit)$coefficients["(Intercept)",1]
-slope <- summary(rot_fit$fit)$coefficients["x",1]
-
-reg_rs <- round(summary(rot_fit$fit)$r.squared, digits = 3)
+reg$mpg_reg1 <- lm_model %>% 
+  fit(mpg ~ reg1, data=train)
   
-rot_plot1 <- df_rot %>% ggplot(aes(x=x, y=mpg)) +
-  geom_abline(slope=slope, intercept=intercept,
+plt$mpg_reg1_fit <- train %>% ggplot(aes(x=reg1, y=mpg)) +
+  geom_abline(slope=get_coef(reg$mpg_reg1, "reg1"),
+              intercept=get_coef(reg$mpg_reg1),
                 color=get_hurwitz_colors("light_gray"),
                 size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(x="New variable, reg",
        y="Fuel Efficiency (mpg)",
        title="Fuel Efficiency vs New Variable",
-       subtitle=str_glue("r squared = {reg_rs}"))
+       subtitle=str_glue("r squared = ",
+                         "{get_rsq(reg$mpg_reg1, 3)}"))
 
-rot_plot1
+plt$mpg_reg1_fit
 ```
 
 ## Orthogonal Regression
@@ -464,7 +469,7 @@ The new $y$ axis coordinate can be seen as the distance a point is from the new
 $x$ axis, the regression line. These distances are shown in blue here.
 
 ```{r, echo=FALSE, fig.width=5, fig.height=5}
-norm_plot
+plt$hp_norm_wt_norm
 ```
 
 We can plot the same points in this new *rotated* coordinate system.
@@ -473,14 +478,12 @@ I will now refer to the regression axis as `reg1` and the perpendicular axis
 as `reg2`.
 
 ```{r, echo=FALSE}
-rot_plot <- df_rot %>% ggplot(aes(x=x, y=y)) +
+plt$reg2_reg1 <- train %>% ggplot(aes(x=reg1, y=reg2)) +
   geom_hline(yintercept=0, color="lightgray", size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
-  labs(x="reg1",
-       y="reg2",
-       title="Rotated Coordinate System Plot")
+  labs(title="Rotated Coordinate System Plot")
 
-rot_plot
+plt$reg2_reg1
 ```
 
 ---
@@ -534,35 +537,34 @@ different regression lines, and plotted the data in the new coordinate system.
 It is apparent that the regression lines are very different in each case.
 
 ```{r, echo=FALSE, fig.width=10, fig.height=4}
-dem_fit <- Deming(norm$wt, norm$hp)
+reg$dem <- Deming(train$wt_norm, train$hp_norm)
 
-norm_fit <- lm_model %>% 
-  fit(hp ~ wt, data=norm)
+reg$hp_norm_wt_norm <- lm_model %>% 
+  fit(hp_norm ~ wt_norm, data=train)
 
-demi_intercept <- dem_fit["Intercept"]
-demi_slope <- dem_fit["Slope"]
-
-intercept <- summary(norm_fit$fit)$coefficients["(Intercept)",1]
-slope <- summary(norm_fit$fit)$coefficients["wt",1]
-
-demi_segments <- perp_segment_coord(norm$wt, norm$hp, demi_intercept, demi_slope) %>% 
+demi_segments <- perp_segment_coord(train$wt_norm, train$hp_norm,
+                                    reg$dem["Intercept"],
+                                    reg$dem["Slope"]) %>% 
   as.data.frame()
 
-plot <- norm %>% ggplot(aes(x=wt, y=hp)) +
+plot <- train %>% ggplot(aes(x=wt_norm, y=hp_norm)) +
   labs(x="Rescaled Weight",
        y="Rescaled Power")
 
-ord_plot <- plot +
-  geom_abline(slope=slope, intercept=intercept,
+plt$hp_norm_wt_norm_reg <- plot +
+  geom_abline(slope=get_coef(reg$hp_norm_wt_norm, "wt_norm"),
+              intercept=get_coef(reg$hp_norm_wt_norm),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
-  geom_segment(aes(xend=wt, yend=hp-norm_fit$fit$residuals),
+  geom_segment(aes(xend=wt_norm,
+                   yend=hp_norm-reg$hp_norm_wt_norm$fit$residuals),
                colour=get_hurwitz_colors("viking")) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(title="Ordinary Regression")
 
-deming_plot <- plot +
-  geom_abline(slope=demi_slope, intercept=demi_intercept,
+plt$hp_norm_wt_norm_dem <- plot +
+  geom_abline(slope=reg$dem["Slope"],
+              intercept=reg$dem["Intercept"],
               color=get_hurwitz_colors("light_gray"),
               size=1) +
   geom_segment(data=demi_segments, 
@@ -572,7 +574,9 @@ deming_plot <- plot +
   labs(title="Orthogonal Regression",
        y="")
 
-grid.arrange(ord_plot, deming_plot, ncol=2)
+grid.arrange(plt$hp_norm_wt_norm_reg, plt$hp_norm_wt_norm_dem, ncol=2)
+
+rm(plot)
 
 ```
 
@@ -583,60 +587,49 @@ uncorrelated as indicated by the horizontal regression line
 and $r^2=0$. The variables based on ordinary regression are only weakly correlated, but the regression line is obviously not horizontal.
 
 ```{r, echo=FALSE, fig.width=10, fig.height=4}
-rot_fit2 <- lm_model %>% 
-  fit(y ~ x, data=df_rot)
+reg$reg2_reg1 <- lm_model %>% 
+  fit(reg2 ~ reg1, data=train)
 
-intercept <- summary(rot_fit2$fit)$coefficients["(Intercept)",1]
-slope <- summary(rot_fit2$fit)$coefficients["x",1]
-
-rot_rs <- round(summary(rot_fit2$fit)$r.squared, digits = 3)
-
-rot_plot <- df_rot %>% ggplot(aes(x=x, y=y)) +
-  geom_abline(slope=slope, intercept=intercept,
+plt$reg2_reg1_fit <- train %>% ggplot(aes(x=reg1, y=reg2)) +
+  geom_abline(slope=get_coef(reg$reg2_reg1, "reg1"),
+              intercept=get_coef(reg$reg2_reg1),
               color=get_hurwitz_colors("light_gray"),
               size=1, alpha=0.5) +
   geom_point(color=get_hurwitz_colors("red")) +
-  labs(x="reg1",
-       y="reg2",
-       title="Rotated Ordinary Regression",
-       subtitle=str_glue("r square = {rot_rs}"))
+  labs(title="Rotated Ordinary Regression",
+       subtitle=str_glue("r square = {get_rsq(reg$reg2_reg1, 3)}"))
 
-demi_rot_df <- norm
-
-demi_rot_df <- demi_rot_df %>% add_column(
-  x = sqrt((demi_segments$x1)^2 + (demi_segments$y1 - demi_intercept)^2),
-  y = sqrt(
+train <- train %>% add_column(
+  ortho1 = sqrt((demi_segments$x1)^2 +
+                  (demi_segments$y1 - reg$dem["Intercept"])^2),
+  ortho2 = sqrt(
     (demi_segments$x1 - demi_segments$x0)^2 +
       (demi_segments$y1 - demi_segments$y0)^2))
 
-demi_rot_df <- demi_rot_df %>% mutate(x = case_when(
-  demi_segments$x1 < 0 ~ -x,
-  demi_segments$x1 >= 0 ~ x
+train <- train %>% mutate(ortho1 = case_when(
+  demi_segments$x1 < 0 ~ -ortho1,
+  demi_segments$x1 >= 0 ~ ortho1
 )) %>% 
-  mutate(y = case_when(
-    demi_segments$y0 < demi_segments$y1 ~ -y,
-    demi_segments$y0 >= demi_segments$y1 ~ y
+  mutate(ortho2 = case_when(
+    demi_segments$y0 < demi_segments$y1 ~ -ortho2,
+    demi_segments$y0 >= demi_segments$y1 ~ ortho2
   ))
 
-demi_rot_fit <- lm_model %>% 
-  fit(y ~ x, data=demi_rot_df)
+reg$ortho2_ortho1 <- lm_model %>% 
+  fit(ortho2 ~ ortho1, data=train)
 
-demi_rot_int <- summary(demi_rot_fit$fit)$coefficients["(Intercept)",1]
-demi_rot_slope <- summary(demi_rot_fit$fit)$coefficients["x",1]
-
-demi_rot_rs <- round(summary(demi_rot_fit$fit)$r.squared, digits = 3)
-
-demi_rot_plot <- demi_rot_df %>% ggplot(aes(x=x, y=y)) +
-  geom_abline(slope=demi_rot_slope, intercept=demi_rot_int,
-            color=get_hurwitz_colors("light_gray"),
-            size=1, alpha=0.5) +
+plt$ortho2_orth1 <- train %>% ggplot(aes(x=ortho1, y=ortho2)) +
+  geom_abline(slope=get_coef(reg$ortho2_ortho1, "ortho1"),
+              intercept=get_coef(reg$ortho2_ortho1),
+              color=get_hurwitz_colors("light_gray"),
+              size=1, alpha=0.5) +
   geom_point(color=get_hurwitz_colors("red")) +
-  labs(x="ortho1",
-       y="ortho2",
-       title="Rotated Orthogonal Regression",
-       subtitle=str_glue("r square = {demi_rot_rs}"))
+  labs(title="Rotated Orthogonal Regression",
+       subtitle=str_glue("r square = {get_rsq(reg$ortho2_ortho1, 3)}"))
 
-grid.arrange(rot_plot, demi_rot_plot, ncol=2)
+grid.arrange(plt$reg2_reg1_fit, plt$ortho2_orth1, ncol=2)
+
+rm(demi_segments)
 ```
 
 ### {-}
@@ -651,29 +644,23 @@ see how this new variable predicts fuel efficiency. For the regressions shown be
 The correlation seems to be about the same as the variable made from ordinary regression projection. While there is no obvious improvement, all the previous commentary on the benefit of orthogonal regression still holds.
 
 ```{r, echo=FALSE, fig.width=10, fig.height=4}
-demi_reg <- lm_model %>% 
-  fit(mpg ~ x, data=demi_rot_df)
+reg$mpg_ortho1 <- lm_model %>% 
+  fit(mpg ~ ortho1, data=train)
 
-demi_reg_int <- summary(demi_reg$fit)$coefficients["(Intercept)",1]
-demi_reg_slope <- summary(demi_reg$fit)$coefficients["x",1]
-
-demi_reg_rs <- round(summary(demi_reg$fit)$r.squared, digits = 3)
-
-demi_reg_plot <- demi_rot_df %>% ggplot(aes(x=x, y=mpg)) +
-  geom_abline(slope=demi_reg_slope, intercept=demi_reg_int,
+plt$mpg_ortho1 <- train %>% ggplot(aes(x=ortho1, y=mpg)) +
+  geom_abline(slope=get_coef(reg$mpg_ortho1, "ortho1"),
+              intercept=get_coef(reg$mpg_ortho1),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
-  labs(x="ortho1",
-       y="",
+  labs(y="",
        title="Ortho Projected Regression",
-       subtitle=str_glue("r square = {demi_reg_rs}"))
+       subtitle=str_glue("r square = {get_rsq(reg$mpg_ortho1, 3)}"))
 
-rot_plot1 <- rot_plot1 +
-  labs(title="Ordinary Projected Regression",
-       x="reg1")
+plt$mpg_reg1_fit <-plt$mpg_reg1_fit +
+  labs(title="Ordinary Projected Regression")
 
-grid.arrange(rot_plot1, demi_reg_plot, ncol=2)
+grid.arrange(plt$mpg_reg1_fit, plt$mpg_ortho1, ncol=2)
 ```
 
 ## Eigenvectors
@@ -701,7 +688,7 @@ Cov(y,x) & Cov(y,y)\end{bmatrix}\]
 The main diagonal contains the variances of the individual variables since $Cov(a,a)=Var(a)$, while off-diagonal values are the covariances between variables. Notice that each individual variable has a variance of 1. This is because we have already divided by the standard deviation during rescaling.
 
 ```{r cov, echo=FALSE}
-cov_df <- cov(norm %>% select(hp, wt))
+cov_df <- cov(train %>% select(hp_norm, wt_norm))
 
 round(cov_df, 2)
 ```
@@ -719,8 +706,8 @@ eig_df
 Another great thing about this method over orthogonal regression projection is that we now have more information about our transformation. For instance, we can see the amount of variance explained by each of our new axes.
 
 The total variance is given by the sum of the eigenvalues ($\lambda$):
-\[total\ variance\ = \sum_{n=1}^{N} \lambda_i\]
-So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total variance})\]
+\[total\ variance\ = \sum_{i=1}^{N} \lambda_i\]
+So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total variance}\]
 
 ---
 
@@ -733,15 +720,15 @@ Now that we have the eigen-decomposition, we can project to our new axes. This a
 I will call our new axes $eig1$ and $eig2$, not to be confused with the eigen values $\lambda_1$ and $\lambda_2$.
 
 ```{r eig_project, echo=FALSE, warning=FALSE}
-eig_t <- t(eig_df$vectors)
+norm_eig <- t(eig_df$vectors) %*% t(select(train, wt_norm, hp_norm)) %>% 
+  t() %>% as_tibble()
 
-norm_t <- norm %>% select(wt, hp) %>% t()
+train <- train %>% add_column(
+  "eig1" = norm_eig$V1,
+  "eig2" = norm_eig$V2 
+)
 
-eig_proj <- eig_t %*% norm_t
-
-norm_eig <- t(eig_proj) %>% as_tibble() %>% 
-  rename("eig1" = "V1",
-         "eig2" = "V2")
+rm(cov_df, eig_df, norm_eig)
 ```
 
 Notice how our new feature space created through eigenvector projection is qualitatively identical to the orthogonal regression projection. While, the center and scale of the axes are not identical, we can see they are perfectly correlated.
@@ -751,36 +738,32 @@ This shows that performing projection to an orthogonal regression line is essent
 #### New Axes
 
 ```{r plot_eig, echo=FALSE, fig.width=10, fig.height=4}
-eig_plot <- norm_eig %>% ggplot(aes(x=eig1, y=eig2)) +
+plt$eig2_eig1 <- train %>% ggplot(aes(x=eig1, y=eig2)) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(title="Eigen Projected Data")
 
-grid.arrange(eig_plot, demi_rot_plot + labs(subtitle=element_blank()), ncol=2)
+grid.arrange(plt$eig2_eig1,
+             plt$ortho2_orth1 + labs(subtitle=element_blank()),
+             ncol=2)
 ``` 
 
 #### Correlation
 
 ```{r eig_demi_corr, echo=FALSE, warning=FALSE}
-norm_eig$ortho1 = demi_rot_df$x
+reg$eig1_ortho1 <- lm_model %>% 
+  fit(eig1 ~ ortho1, data=train)
 
-demi_eig_reg <- lm_model %>% 
-  fit(eig1 ~ ortho1, data=norm_eig)
-
-demi_eig_reg_int <- summary(demi_eig_reg$fit)$coefficients["(Intercept)",1]
-demi_eig_reg_slope <- summary(demi_eig_reg$fit)$coefficients["ortho1",1]
-
-demi_eig_reg_rs <- round(summary(demi_eig_reg$fit)$r.squared, digits = 3)
-
-norm_eig %>% ggplot(aes(x=demi_rot_df$x, eig1)) +
-  geom_abline(slope=demi_eig_reg_slope,
-              intercept=demi_eig_reg_int,
+plt$eig1_ortho1 <- train %>% ggplot(aes(x=ortho1, y=eig1)) +
+  geom_abline(slope=get_coef(reg$eig1_ortho1, "ortho1"),
+              intercept=get_coef(reg$eig1_ortho1),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
   geom_point(color=get_hurwitz_colors("red")) +
-  labs(x = "ortho1",
-       title="Eigenvector Projected vs 
+  labs(title="Eigenvector Projected vs 
        Orthogonal Regression Projected Variables",
-       subtitle=str_glue("r squared = {demi_eig_reg_rs}"))
+       subtitle=str_glue("r squared = {get_rsq(reg$eig1_ortho1, 3)}"))
+
+plt$eig1_ortho1
 ```
 
 ### {-}
@@ -800,47 +783,39 @@ So, let's take a look at the similarities between our eigenvector projections an
 #### New Coordinates
 
 ```{r, echo=FALSE, fig.width=10, fig.height=4}
-pca_fit <- norm %>% 
-  select(-mpg) %>% 
+pca_fit <- train %>% 
+  select(wt_norm, hp_norm) %>% 
   prcomp(scale=FALSE, center=FALSE)
 
-pca_df <- tibble(
+train <- train %>% add_column(
   PC1 = pca_fit$x[,1],
   PC2 = pca_fit$x[,2])
 
-norm_eig$PC1 <- pca_df$PC1
+rm(pca_fit)
 
-pca_eig_reg <- lm_model %>% 
-  fit(PC1 ~ eig1, data=norm_eig)
+reg$PC1_eig1 <- lm_model %>% 
+  fit(PC1 ~ eig1, data=train)
 
-pca_eig_reg_int <- summary(pca_eig_reg$fit)$coefficients["(Intercept)",1]
-pca_eig_reg_slope <- summary(pca_eig_reg$fit)$coefficients["eig1",1]
-
-pca_eig_reg_rs <- round(summary(pca_eig_reg$fit)$r.squared, digits = 3)
-
-pca_plot <- pca_df %>% ggplot(aes(x=PC1, y=PC2)) +
+plt$PC2_PC1 <- train %>% ggplot(aes(x=PC1, y=PC2)) +
   geom_point(color=get_hurwitz_colors("red")) +
   labs(title="PCA Projected Data")
 
-grid.arrange(pca_plot, eig_plot, ncol=2)
+grid.arrange(plt$PC2_PC1, plt$eig2_eig1, ncol=2)
 ```
 
 #### Correlation
 
 ```{r, echo=FALSE}
-pca_eig_plot <- norm_eig %>% ggplot(aes(x=eig1)) +
-  geom_abline(slope=pca_eig_reg_slope,
-              intercept=pca_eig_reg_int,
+plt$PC1_eig1 <- train %>% ggplot(aes(x=eig1, y=PC1)) +
+  geom_abline(slope=get_coef(reg$PC1_eig1, "eig1"),
+              intercept=get_coef(reg$PC1_eig1),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
-  geom_point(aes(y=pca_fit$x[,1]),
-    color=get_hurwitz_colors("red")) +
-  labs(x="eig1",
-       y="PC1",
-       title="PCA vs Eigenvector Projected Variables",
-       subtitle=str_glue("r square = {pca_eig_reg_rs}"))
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="PCA vs Eigenvector Projected Variables",
+       subtitle=str_glue("r square = {get_rsq(reg$PC1_eig1, 3)}"))
 
-pca_eig_plot
+plt$PC1_eig1
 ```
 
 ### {-}
