@@ -57,7 +57,7 @@ train
 
 ### Sample Plot
 
-```{r raw_plot, echo=FALSE, include=FALSE}
+```{r raw_plot, echo=FALSE, message=FALSE}
 train %>% ggplot(aes(x=wt, y=hp, color=mpg)) +
   geom_smooth(method="lm", se=FALSE,
               color=get_hurwitz_colors("light_gray")) +
@@ -282,6 +282,8 @@ In this case, we could ignore our original 2 variables and instead use a simplif
 
 One thing to note though is that not all information is preserved. For instance the points at $(1.28, 1.95)$ and $(1.63, 1.54)$ project to nearly the same point on the regression line. So with just this 1 dimension, the difference between these points is greatly reduced.
 
+---
+
 With this ideal example in mind, let's do the same to our car data. Let's add perpendicular lines connecting the regression line and the points to illustrate the new axis.
 
 ```{r reg_axis, echo=FALSE}
@@ -294,6 +296,8 @@ plt$hp_wt
 ```
 
 You may think, "Those are not perpendicular to the regression line!". They actually are, but because the scale on the 2 axes are so different, they don't look like it.
+
+---
 
 We can visualize the same plot with both axes to the same scale, but then we can't even see the lines. The magnitude of our vertical axis is just too much greater than our horizontal axis.
 
@@ -310,7 +314,7 @@ rm(max_scale)
 
 ### The Problem of Scale
 
-Looking at the last plot, we can see that if we use this technique, then when we project the points to the regression line, the variable with smaller magnitude doesn't really seem to matter. Effectively, our new axis based on the regression line is pretty much the same as just using the `power` or $y$ axis.
+Looking at the last plot, we can see that if we use this technique, then when we project the points to the regression line, the variable with smaller magnitude doesn't really seem to matter. Effectively, our new axis based on the regression line is pretty much the same as just using the `power` or $y$ axis as our predictor.
 
 The reality of this can be seen in this way. The regression line and vertical axis are pretty much parallel. So, when projecting to the regression line, it is about the same as projecting just to the vertical axis, and ignoring the other variable (`weight`).
 
@@ -368,7 +372,7 @@ Additionally, the regression line is more parallel to the $x$ axis. So if we wer
 
 The reason that when the fake data were projected to the new axis (regression line) worked so well is that I intentionally gave each variable a similar scale (0 to 5).
 
-So, in order to make this proposed method of dimension reduction work, we need to ensure that each variable is equally scaled.We can rest assured that this is okay, since we have already demonstrated that scale is arbitrary ($1000 lb$ vs $lb$).
+So, in order to make this proposed method of dimension reduction work, we need to ensure that each variable is equally scaled.We can rest assured that this is okay, since we have already demonstrated that scale is arbitrary ($1000\ lb$ vs $lb$).
 
 We could, for instance, pick a value for each variable by which we would divide each value. By choosing the right number for each, they could have the same scale. But how would you choose this value? Trial and error? Spray and pray?
 
@@ -402,12 +406,12 @@ Going back to the overall goal: we are trying to create a regression model to pr
 
 To do this, I will create a new variable which I will call `reg`, which is the distance along the regression line where each point projects. This can be seen as the where the blue lines touch the regression line in the plot above.
 
-For now, I am doing this based on geometry (read pythagorean theorem).
+For now, I am doing this based on geometry (*thank you Pythagoras*).
 
 So now, each point is represented by the single variable `reg`. We can plot this variable against `mpg` since this is the variable we want to predict based on our new single predictor variable, `reg`.
 
-```{r rot, echo=FALSE, include=FALSE}
-train <- train %>% plot_reg_coord(x="wt_norm", y="hp_norm") %>% 
+```{r rot, echo=FALSE, message=FALSE}
+train <- train %>% reg_coord(x="wt_norm", y="hp_norm") %>% 
   left_join(train) %>% 
   rename("reg1"=x, "reg2"=y)
 
@@ -495,6 +499,7 @@ It may (or may not) seem odd that these new variables are still correlated!
 The strangeness may be more apparent when you think about why we took this
 approach in the first place. We realized our variables were correlated,
 so a projection to a regression line summarized both variables pretty well.
+
 Since they're still correlated, we could do this same process again. And again..
 
 Clearly, these variables are less correlated though
@@ -660,7 +665,7 @@ plt$mpg_ortho1 <- train %>% ggplot(aes(x=ortho1, y=mpg)) +
 plt$mpg_reg1_fit <-plt$mpg_reg1_fit +
   labs(title="Ordinary Projected Regression")
 
-grid.arrange(plt$mpg_reg1_fit, plt$mpg_ortho1, ncol=2)
+grid.arrange(plt$mpg_reg1_fit + labs(x="reg1"), plt$mpg_ortho1, ncol=2)
 ```
 
 ## Eigenvectors
@@ -674,7 +679,7 @@ We began with regressions since these intuitively follow directions of variance.
 
 This process is effectively the same as the orthogonal regression projection, but is much simpler to perform, since matrix operations are more concise than performing regression and projection based on geometries.
 
-Since it pretty much the same process, we will still be computing on the scaled data, as this method is still sensitive to variable magnitude.
+Since it is pretty much the same process, we will still be computing on the scaled data, as this method is still sensitive to variable magnitude.
 
 ---
 
@@ -707,7 +712,7 @@ Another great thing about this method over orthogonal regression projection is t
 
 The total variance is given by the sum of the eigenvalues ($\lambda$):
 \[total\ variance\ = \sum_{i=1}^{N} \lambda_i\]
-So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total variance}\]
+So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total\ variance}\]
 
 ---
 
@@ -730,6 +735,8 @@ train <- train %>% add_column(
 
 rm(cov_df, eig_df, norm_eig)
 ```
+
+---
 
 Notice how our new feature space created through eigenvector projection is qualitatively identical to the orthogonal regression projection. While, the center and scale of the axes are not identical, we can see they are perfectly correlated.
 
@@ -772,9 +779,9 @@ plt$eig1_ortho1
 
 Now, for the big reveal you have all been waiting for: What we just did is ... *drumroll please* ... principal component analysis!
 
-Orthogonal regression line = dominant eigenvector direction = first principal component
+Orthogonal regression line = dominant eigenvector direction = first principal axis
 
-Orthogonal residual direction = secondary eigenvector direction = second principal component
+Orthogonal residual direction = secondary eigenvector direction = second principal axis
 
 So, behind the scenes of these fancy principal component functions, they are really just projecting to the directions given by the eigenvectors, which is pretty much the same as our orthogonal regression projections.
 
