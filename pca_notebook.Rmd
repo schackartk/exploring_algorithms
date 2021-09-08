@@ -179,6 +179,14 @@ We can see that this is a better model than either of the individual linear regr
 
 But imagine if you have a very large number of predictors. There would have to be a term for each one. This is one of many reasons why we may want to perform dimension reduction. This will reduce the number of predictors so that the regression model is simplified.
 
+---
+
+*Takeaways*
+
+* We can build linear regression models based on each predictor
+* A multilinear regression model based on all predictors seems to be a better fit
+* Multilinear regression has more terms than regular linear regression
+
 ## Projections
 
 Although our dataset already has very few predictors (2), it can be used to illustrate the logic of dimension reduction very well.
@@ -363,6 +371,8 @@ Now, instead of the lines that are perpendicular to the regression line looking 
 
 Additionally, the regression line is more parallel to the $x$ axis. So if we were to project onto this regression line, our new variable would mostly reflect the `weight` as a predictor.
 
+---
+
 *Takeaways:*
 
 * The scaling of the axes is arbitrary
@@ -452,6 +462,16 @@ plt$mpg_reg1_fit <- train %>% ggplot(aes(x=reg1, y=mpg)) +
 
 plt$mpg_reg1_fit
 ```
+
+---
+
+*Takeaways*
+
+* Each variable can be rescaled by dividing by its standard deviation
+* Once each variable is rescaled, they have equal magnitude
+* Each variable then contributes equally to the new axis
+* This new single variable effectively captures the information of both original variables leading to similar predictive strength
+
 
 ## Orthogonal Regression
 
@@ -668,6 +688,19 @@ plt$mpg_reg1_fit <-plt$mpg_reg1_fit +
 grid.arrange(plt$mpg_reg1_fit + labs(x="reg1"), plt$mpg_ortho1, ncol=2)
 ```
 
+---
+
+*Takeaways*
+
+* Ordinary least-square regression is inappropriate as a new axis for a few reasons:
+  * Minimizes *vertical* errors
+  * Dependent on which variable is on which axis
+  * New variables are still correlated
+* Orthogonal regression is advantageous:
+  * Variable order does not matter
+  * New variables are uncorrelated
+* Rescaling still matters
+
 ## Eigenvectors
 
 So far we have explored 2 methods of finding a new axis to which we can project:
@@ -826,5 +859,80 @@ plt$PC1_eig1
 ```
 
 ### {-}
+
+Uh-oh. Why are they not perfectly correlated?
+
+So far, we have performed re-scaling as a pre-pocessing step, because we saw the undesirable effects that occur when our variables have different magnitudes.
+
+Now we are seeing another effect that our variables are having on PCA.
+
+To make the final steps work, we will explore how *re-centering* was not necessary for orthogonal regression projection, but is necessary for PCA.
+
+*Takeaways*
+
+* The directions given by the eigenvectors of the covariance matrix are equivalent to the orthogonal regression projection axes
+* The eigenvalues associated with each eigenvector represent the amount of variance in that direction
+* The directions given by the eigenvectors are referred to as principal axes
+* PCA is sensitive the *re-centering*, which we will explore further
+
+## Recentering
+
+Previously, our orthogonal regression line was fine with having a non-zero intercept. This meant that it did not really matter "where" our rescaled data were. However, PCA builds the new axes *through the origin* by definition.
+
+To illustrate the issue with this, we can build an orthogonal regression with the constraint that the intercept be zero.
+
+```{r, echo = false}
+reg$dem_zero_int <- c(
+  slope = mean(train$hp_norm) / mean(train$wt_norm),
+  intercept = 0
+)
+
+
+
+train %>% ggplot(aes(x=wt_norm, y=hp_norm)) +
+  geom_point() +
+  geom_abline(slope=reg$dem_zero_int["slope"],
+              intercept=reg$dem_zero_int["intercept"]) +
+  geom_abline(slope=reg$dem["Slope"],
+              intercept=reg$dem["Intercept"],
+              color="gray") +
+  lims(x=c(0,6), y=c(0,6))
+
+```
+```{r}
+
+ortho_no_segments <- perp_segment_coord(train$wt_norm, train$hp_norm,
+                                    reg$dem_zero_int["intercept"],
+                                    reg$dem_zero_int["slope"]) %>% 
+  as.data.frame()
+
+train <- train %>% add_column(
+  ortho_no_1 = sqrt((ortho_no_segments$x1)^2 +
+                  (ortho_no_segments$y1 - reg$dem_zero_int["intercept"])^2),
+  ortho_no_2 = sqrt(
+    (ortho_no_segments$x1 - ortho_no_segments$x0)^2 +
+      (ortho_no_segments$y1 - ortho_no_segments$y0)^2))
+
+train <- train %>% mutate(ortho_no_1 = case_when(
+  ortho_no_segments$x1 < 0 ~ -ortho_no_1,
+  ortho_no_segments$x1 >= 0 ~ ortho_no_1
+)) %>% 
+  mutate(ortho_no_2 = case_when(
+    ortho_no_segments$y0 < ortho_no_segments$y1 ~ -ortho_no_2,
+    ortho_no_segments$y0 >= ortho_no_segments$y1 ~ ortho_no_2
+  ))
+
+reg$PC1_ortho_no_1 <- lm_model %>% 
+  fit(PC1 ~ ortho_no_1, data=train)
+```
+
+```{r}
+train %>% ggplot(aes(x=ortho_no_1, y=PC1)) +
+  geom_abline(slope=get_coef(reg$PC1_ortho_no_1, "ortho_no_1"),
+              intercept=get_coef(reg$PC1_ortho_no_1),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red"))
+```
 
 # {-}
