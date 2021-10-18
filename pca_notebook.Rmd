@@ -27,7 +27,7 @@ theme_set(theme_light() +
                 plot.subtitle = element_text(hjust=0.5)))
 ```
 
-## Intoduction
+## Introduction
 
 ### Overview & Purpose
 
@@ -74,7 +74,7 @@ Let's assume that the goal of this is to create a model that predicts `mpg` base
 on `weight` and `power`.
 
 
-## Linear Regressions
+## Regressions
 
 ### Multiple Linear Regressions {.tabset}
 
@@ -386,7 +386,7 @@ So, in order to make this proposed method of dimension reduction work, we need t
 
 We could, for instance, pick a value for each variable by which we would divide each value. By choosing the right number for each, they could have the same scale. But how would you choose this value? Trial and error? Spray and pray?
 
-There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. If the values of each variable are least kind of normally distributed, they will have similar scale. Let's take a look at the results of this.
+There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. If the values of each variable are at least kind of normally distributed, they will have similar scale. Let's take a look at the results of this.
 
 ```{r norm, echo=FALSE, fig.height=5, fig.width=5}
 train$hp_norm <- train$hp / sd(train$hp)
@@ -877,17 +877,15 @@ To make the final steps work, we will explore how *re-centering* was not necessa
 
 ## Recentering
 
-Previously, our orthogonal regression line was fine with having a non-zero intercept. This meant that it did not really matter "where" our rescaled data were. However, PCA builds the new axes *through the origin* by definition.
+Previously, our orthogonal regression line had a non-zero intercept. This meant that the regression performed well no matter "where" our rescaled data were. However, PCA builds the new axes *through the origin* by definition.
 
-To illustrate the issue with this, we can build an orthogonal regression with the constraint that the intercept be zero.
+To illustrate the issue with this, we can build an orthogonal regression with the constraint that the intercept be zero (*i.e.* the regression line passes through the origin). This simulates how principal components are chosen.
 
 ```{r, echo = false}
 reg$dem_zero_int <- c(
   slope = mean(train$hp_norm) / mean(train$wt_norm),
   intercept = 0
 )
-
-
 
 train %>% ggplot(aes(x=wt_norm, y=hp_norm)) +
   geom_point() +
@@ -896,10 +894,18 @@ train %>% ggplot(aes(x=wt_norm, y=hp_norm)) +
   geom_abline(slope=reg$dem["Slope"],
               intercept=reg$dem["Intercept"],
               color="gray") +
-  lims(x=c(0,6), y=c(0,6))
+  lims(x=c(0,6), y=c(0,6)) +
+  labs(x="Rescaled Weight",
+       y="Rescaled Power",
+       title="Orthogonal Regression",
+       subtitle="Gray: standard Black: through origin")
 
 ```
-```{r}
+Now, we can project to this new regression line. I will call our new axes that result from this projection `ortho_no_1` and `ortho_no_2`.
+
+Here is `ortho_no_1` plotted against `PC1`.
+
+```{r, echo=FALSE}
 
 ortho_no_segments <- perp_segment_coord(train$wt_norm, train$hp_norm,
                                     reg$dem_zero_int["intercept"],
@@ -926,13 +932,275 @@ reg$PC1_ortho_no_1 <- lm_model %>%
   fit(PC1 ~ ortho_no_1, data=train)
 ```
 
-```{r}
+```{r, echo=FALSE}
 train %>% ggplot(aes(x=ortho_no_1, y=PC1)) +
   geom_abline(slope=get_coef(reg$PC1_ortho_no_1, "ortho_no_1"),
               intercept=get_coef(reg$PC1_ortho_no_1),
               color=get_hurwitz_colors("light_gray"),
               size=1) +
-  geom_point(color=get_hurwitz_colors("red"))
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="PC1 vs. ortho_no_1",
+       subtitle=str_glue("r square = {get_rsq(reg$PC1_ortho_no_1,3)}"))
 ```
+
+Now we have perfectly recapitulated Principal Component Analysis by projecting to an orthogonal regression line.
+
+However, by performing the orthogonal regression through the origin, we actually lose a lot of sensitivity to the data.
+
+---
+
+#### Loss of Sensitivity
+
+When we force orthogonal regression to pass through the origin, the line is fully defined by just two points: the origin $(0,0)$ and the centroid of the data $(\bar{x}, \bar{y})$. This is not a very good representation of the data due to these restrictions.
+
+To illustrate this, I can show what the first principal component (or orthogonal regression with fixed zero intercept) looks like on some fake data. As mentioned, the fit solely depends on the intercept and centroid, and ignore the actual slope of the data.
+
+```{r}
+df_fake$x_2 <- c(0.2, 0.27, 0.32, 0.39, 0.44, 0.44, 0.48,
+                  0.51, 0.59, 0.68, 0.72, 0.83, 0.95, 1.0)
+
+df_fake$y_2 <- c(0.97, 0.86, 0.86, 0.75, 0.7, 0.65, 0.49,
+                 0.50, 0.41, 0.45, 0.37, 0.26, 0.30, 0.11)
+
+plt$y_2_x_2 <- df_fake %>% 
+  ggplot(aes(x=x_2, y=y_2)) +
+  geom_abline(slope=mean(df_fake$y_2) / mean(df_fake$x_2),
+              intercept=c(0,0),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  lims(x=c(0, 1), y=c(0, 1)) +
+  labs(x="Variable 1",
+       y="Variable 2",
+       title="First Principal Component of Uncentered Data",
+       subtitle="Equivalent to Orthogonal Regression, 0 Intercept")
+  
+
+plt$y_2_x_2
+```
+
+
+---
+
+### Recentering
+
+With this in mind, we have to consider our constraints. As I stated, principal components (via matrix operations) always pass through the origin. So, we cannot get around that aspect when moving from orthogonal regression to principal component analysis.
+
+But recall how we rescaled our data to improve the regression performance?
+
+Now, we can do something similar. It can be shown that orthogonal regression, as well as principal components always pass through the centroid, which is the mean of each variable $(\bar{x}, \bar{y})$.
+
+So what if we performed some operation on our data such that the centroid is at the origin? Then we no longer need to limit the fit of the regression just to ensure that the line passes through the origin, as it will naturally do so.
+
+We can do that by subtracting the mean of each variable from each point. Recall that our rescaling operation was dividing each point by the standard deviation of each variable. Now if we both rescale (divide by $\sigma$) and recenter (subtract $\bar{x}$) the equation for transforming each variable is:
+
+$X=\frac{x-\bar{x}}{\sigma}$
+
+But keep in mind that $x$ is referring to any variable, not just the variable on the $x$ axis.
+
+---
+
+### Standardization
+
+The above equation may look familiar. Indeed, it is the equation of a $z$-score to convert data to a standard normal distribution. In the standard normal distribution:
+
+* The standard deviation is 1, which for us means that each variable contributes equally to the regression for projection
+* The mean is 0, which means that the orthogonal regression can be optimal while passing through the origin as is necessary for PCA.
+
+When the data are standardized, here is what they look like
+
+```{r, echo=FALSE, fig.height=5, fig.width=5}
+train <- train %>% 
+  mutate(hp_z =  (hp - mean(hp)) / sd(hp),
+         wt_z =  (wt - mean(wt)) / sd(wt))
+
+max_scale <- max(abs(train$hp_z), abs(train$wt_z))
+
+plt$hp_z_tw_z <- train %>% ggplot(aes(x=wt_z, y=hp_z)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  geom_point(x=mean(train$wt_z), y=mean(train$hp_z),
+             color="darkgray",
+             pch="+", size=5) +
+  lims(x=c(-max_scale, max_scale),
+       y=c(-max_scale, max_scale)) +
+  labs(title="Standardized Variables",
+       subtitle="Centroid marked with +",
+       x="Standardized Weight",
+       y="Standardized Power")
+
+plt$hp_z_tw_z
+```
+
+---
+
+### Dimension Reduction of Standardized Variables {.tabset}
+
+Using the standardized variables, we can compare (a) the projection to orthogonal regression and (b) PCA.
+
+```{r, echo=FALSE}
+reg$hp_z_wt_z <- Deming(train$wt_z, train$hp_z)
+
+demi_segments <- perp_segment_coord(train$wt_z, train$hp_z,
+                                    reg$hp_z_wt_z["Intercept"],
+                                    reg$hp_z_wt_z["Slope"]) %>% 
+  as.data.frame()
+
+train <- train %>% mutate(
+  ortho_z_1 = sqrt((demi_segments$x1)^2 +
+                  (demi_segments$y1 -
+                     reg$hp_z_wt_z["Intercept"])^2),
+  ortho_z_2 = sqrt(
+    (demi_segments$x1 - demi_segments$x0)^2 +
+      (demi_segments$y1 - demi_segments$y0)^2))
+
+train <- train %>% mutate(ortho_z_1 = case_when(
+    demi_segments$x1 < 0 ~ -ortho_z_1,
+    demi_segments$x1 >= 0 ~ ortho_z_1
+  )) %>% 
+    mutate(ortho_z_2 = case_when(
+      demi_segments$y0 < demi_segments$y1 ~ -ortho_z_2,
+      demi_segments$y0 >= demi_segments$y1 ~ ortho_z_2
+    ))
+
+pca_z_fit <- train %>% 
+  select(wt_z, hp_z) %>% 
+  prcomp(scale=FALSE, center=FALSE)
+
+train <- train %>% add_column(
+  PC1_z = pca_z_fit$x[,1],
+  PC2_z = pca_z_fit$x[,2])
+
+remove(pca_z_fit)
+
+reg$PC1_z_ortho_z_1 <- lm_model %>% 
+  fit(PC1_z ~ ortho_z_1, data=train)
+```
+
+#### Projections
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+plt$ortho_z_2_ortho_z_1 <- train %>% 
+  ggplot(aes(x=ortho_z_1, y=ortho_z_2)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="Orthogonal Regression Projection",
+       x="ortho_1 of standardized variables",
+       y="ortho_2 of standardized variables")
+
+plt$PC2_z_PC1_z <- train %>% 
+  ggplot(aes(x=PC1_z, y=PC2_z)) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="Principal Component Projection",
+       x="PC1 of standardized variables",
+       y="PC2 of standardized variables")
+
+grid.arrange(plt$ortho_z_2_ortho_z_1,
+             plt$PC2_z_PC1_z,
+             ncol=2)
+```
+
+#### Correlation
+
+```{r, echo=FALSE, warning=FALSE}
+plt$PC1_z_ortho_z_1 <- train %>%
+  ggplot(aes(x=ortho_z_1, y=PC1_z)) +
+  geom_abline(slope=get_coef(reg$PC1_z_ortho_z_1, "ortho_z_1"),
+              intercept=get_coef(reg$PC1_z_ortho_z_1),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(title="PC1 and Orthogonal Projection of Standardized Variables",
+       x="ortho_1 of standardized variables",
+       y="PC1 of standardized variables",
+       subtitle=str_glue("r square = {get_rsq(reg$PC1_z_ortho_z_1,3)}"))
+
+plt$PC1_z_ortho_z_1
+```
+
+### {-}
+
+---
+
+*Takeaways*
+
+* Principal components always pass through the origin, which limits their fit to uncentered data
+* We can center data by converting to $z$-score, which allows PCA to optimally fit the data
+* PCA is identical to projection to an orthogonal regression, once data have been standardized
+
+## Summary
+
+We have taken a road trip to fundamentally understanding principal component analysis.
+
+### Motivation
+
+There are a variety of reasons for performing dimension reduction, including simplifying the overall model by reducing the number of variables.
+
+Some variables may be correlated, so there is a *redundancy* in their information. This makes itself apparent in that if you know the value of one correlated variable, you can predict the value of the other variable. Converting these correlated variable into a single new variable seems like a good choice for reducing the number of variables while retaining information.
+
+### Projection to Linear Regression
+
+Since linear regressions follow the pattern of correlated variables, we could project to a linear regression as a single new variable representing the original correlated variables.
+
+However, ordinary least-squares regression is dependent on variable order. You will get a different axis dependent on which variable is on each axis.
+
+Orthogonal regression (*a.k.a.* Deming or Total Least Squares regression) is independent of variable order, and is a better choice. 
+
+Additionally, when projecting to ordinary least-squares regression, the resulting variables may still be correlated. The resultant variables from projection to orthogonal regression are not.
+
+Since PCA is essentially the same as this approach, there is a catch. As mentioned, the new resulting axes are uncorrelated by definition. If all the original variables are correlated, then only the first principal axis has any meaning. For this reason, exploratory data analysis is crucial to see which original variables are correlated. If they all are, then PCA is not advisable beyond the first principal component.
+
+### Standardization
+
+We need to standardize our variables for PCA for a few reasons.
+
+* When variables have different magnitudes, the larger magnitude variable(s) dominate the new axis.
+* When variables are uncentered, PCA is completely insensitive to slope, and is only defined by the centroid.
+
+We can negate the above concerns by standardizing each variable by converting to a $z$-score.
+
+$z=\frac{x-\bar{x}}{\sigma}$.
+
+It should be noted that this method works best for normally distributed variables. PCA performance can be improved by pre-processing data to become approximately normally distributed before standardization. For instance, if your data are log-normally distributed, you may want to first take the $\log$ of your variable before calculating $z$-score.
+
+Since standardization is so crucial, most functions that are implementations of PCA in various programming languages (R, Python, etc.) have an option to perform centering and rescaling automatically. However, these operations are generally optimal for normally distributed data but the functions do not check this assumption. For this reason it is best to check this assumption, and if they are not normal, perform your own pre-processing.
+
+### Eigen Decomposition
+
+The orthogonal regression follows the direction of maximum variance of the variables. This direction can be calculated by eigen decomposition. This yields:
+
+* Eigen vectors: which indicate the direction(s) of maximum variance
+* Eigen values: which indicate the amount of total variance represented by the corresponding eigen vector
+
+PCA is performed using eigen decomposition. This gives more information than simply projecting to the orthogonal regression lines (*e.g.* amount of variance represented by the new axes).
+
+---
+
+### Back to The Predictive Model
+
+We started this journey by trying to predict vehicle fuel efficiency from weight and power. After doing some linear regressions the variables independently, and then with multilinear regression, we decided to try dimension reduction to capture the effect of both weight and power in a single variabel.
+
+So to wrap it up, let's take look at predicting fuel efficiency based on the first principal component
+
+```{r}
+reg$mpg_PC1_z <- lm_model %>% 
+  fit(mpg ~ PC1_z, data=train)
+
+plt$mpg_PC1_z <- train %>% 
+  ggplot(aes(x=PC1_z, y=mpg)) +
+  geom_abline(slope=get_coef(reg$mpg_PC1_z, "PC1_z"),
+              intercept=get_coef(reg$mpg_PC1_z),
+              color=get_hurwitz_colors("light_gray"),
+              size=1) +
+  geom_point(color=get_hurwitz_colors("red")) +
+  labs(x="First Principal Component (PC1)",
+       y="Fuel Efficiency (mpg)",
+       title="Fuel Efficiency vs First Principal Component",
+       subtitle=str_glue("r-square = {get_rsq(reg$mpg_PC1_z)}"))
+
+plt$mpg_PC1_z
+```
+
+It seems that for this example case, mutlilinear regression is a better way of predicting fuel efficiency from the original two variables. And maybe that is the final lesson. This project showed us intuitively how PCA works. But in our case it was not necessary since we had so few variables, and actually made the performance worse. Sometimes "simpler" models like MLR are better!
+
+Hopefully this has shown how PCA works. Now you may better understand how and why we preprocess data, what the variance measures indicate, and when PCA may actually be detrimental to model performance.
 
 # {-}
