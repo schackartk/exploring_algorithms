@@ -419,6 +419,8 @@ plt$hp_wt_lb +
 rm(max_scale)
 ```
 
+### Role Reversed
+
 Now, instead of the lines that are perpendicular to the regression line looking horizontal, they look vertical. This is because the $x$ axis now has greater magnitude.
 
 Additionally, the regression line is more parallel to the $x$ axis. So if we were to project onto this regression line, our new variable would mostly reflect the `weight` as a predictor.
@@ -943,6 +945,8 @@ plt$PC1_eig1 <- train %>% ggplot(aes(x = eig1, y = PC1)) +
 
 plt$PC1_eig1
 ```
+
+### Something Isn't Right
 
 Uh-oh. Why are they not perfectly correlated?
 
