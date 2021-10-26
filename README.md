@@ -2,7 +2,7 @@
 
 In an attempt to gain a better understanding of common machine learning algorithms, I am exploring how and why they work.
 
-This project is available on github.io to step back from the code and into the exploration
+This project is available on [schackartk.github.io](https://schackartk.github.io/exploring_algorithms/) to step back from the code and into the exploration
 
 ## What is here:
 
