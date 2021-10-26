@@ -137,8 +137,6 @@ train %>% ggplot(aes(x=hp, y=mpg)) +
        y="Fuel Efficiency (mpg)")
 ```
 
-### {-}
-
 Between these two regressions (click the tabs), weight looks like it may be a better predictor than power based on $r^2$.
 
 Wouldn't it be nice to have a model that creates a regression on both at the same time?
@@ -364,8 +362,6 @@ plt$hp_wt_lb +
 
 rm(max_scale)
 ```
-
-### {-}
 
 Now, instead of the lines that are perpendicular to the regression line looking horizontal, they look vertical. This is because the $x$ axis now has greater magnitude.
 
@@ -657,8 +653,6 @@ grid.arrange(plt$reg2_reg1_fit, plt$ortho2_orth1, ncol=2)
 rm(demi_segments)
 ```
 
-### {-}
-
 ---
 
 ### Checking Predictor
@@ -806,8 +800,6 @@ plt$eig1_ortho1 <- train %>% ggplot(aes(x=ortho1, y=eig1)) +
 plt$eig1_ortho1
 ```
 
-### {-}
-
 ### Principal Component Analysis {.tabset}
 
 Now, for the big reveal you have all been waiting for: What we just did is ... *drumroll please* ... principal component analysis!
@@ -857,8 +849,6 @@ plt$PC1_eig1 <- train %>% ggplot(aes(x=eig1, y=PC1)) +
 
 plt$PC1_eig1
 ```
-
-### {-}
 
 Uh-oh. Why are they not perfectly correlated?
 
@@ -955,7 +945,7 @@ When we force orthogonal regression to pass through the origin, the line is full
 
 To illustrate this, I can show what the first principal component (or orthogonal regression with fixed zero intercept) looks like on some fake data. As mentioned, the fit solely depends on the intercept and centroid, and ignore the actual slope of the data.
 
-```{r}
+```{r, echo=FALSE}
 df_fake$x_2 <- c(0.2, 0.27, 0.32, 0.39, 0.44, 0.44, 0.48,
                   0.51, 0.59, 0.68, 0.72, 0.83, 0.95, 1.0)
 
@@ -978,7 +968,6 @@ plt$y_2_x_2 <- df_fake %>%
 
 plt$y_2_x_2
 ```
-
 
 ---
 
@@ -1116,8 +1105,6 @@ plt$PC1_z_ortho_z_1 <- train %>%
 plt$PC1_z_ortho_z_1
 ```
 
-### {-}
-
 ---
 
 *Takeaways*
@@ -1180,7 +1167,7 @@ We started this journey by trying to predict vehicle fuel efficiency from weight
 
 So to wrap it up, let's take look at predicting fuel efficiency based on the first principal component
 
-```{r}
+```{r, echo=FALSE}
 reg$mpg_PC1_z <- lm_model %>% 
   fit(mpg ~ PC1_z, data=train)
 
@@ -1202,5 +1189,3 @@ plt$mpg_PC1_z
 It seems that for this example case, mutlilinear regression is a better way of predicting fuel efficiency from the original two variables. And maybe that is the final lesson. This project showed us intuitively how PCA works. But in our case it was not necessary since we had so few variables, and actually made the performance worse. Sometimes "simpler" models like MLR are better!
 
 Hopefully this has shown how PCA works. Now you may better understand how and why we preprocess data, what the variance measures indicate, and when PCA may actually be detrimental to model performance.
-
-# {-}
