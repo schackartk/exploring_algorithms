@@ -1,0 +1,1346 @@
+---
+title: "Explained: Principal Component Analysis"
+output: html_notebook
+author: Kenneth Schackart (schackartk1@gmail.com)
+---
+
+# {.tabset}
+
+```{r setup, include=FALSE}
+library(broom)      # tidy
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)  # Side by side plots
+library(hurwitzLab) # Color palettes
+library(MethComp)   # Deming regression
+library(parsnip)
+library(purrr)      #map
+library(stringr)
+library(tibble)
+library(tidyr)
+
+source("helpers.R")
+
+theme_set(theme_light() +
+            theme(
+              plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5)
+            ))
+```
+
+## Introduction
+
+### Overview & Purpose
+
+This document is intended to give an intuitive sense of how PCA works, and why certain pre-processing steps are necessary. Many implementations of PCA provide options to perform these pre-processing steps.
+
+All analysis here is performed in R, with the help of several packages.
+
+### The Data
+
+I will be using the mtcars dataset built-in to R. For our purposes, we will only
+be looking at 3 variables: weight (`wt`), horsepower (`hp`), and fuel efficiency `mpg`.  Here is what they look like.
+
+```{r data_select, echo=FALSE}
+df <- mtcars %>% select(mpg, wt, hp)
+
+set.seed(3456)
+trainIndex <- createDataPartition(df$mpg,
+                                  p = .8,
+                                  list = FALSE,
+                                  times = 1)
+train <- df[trainIndex, ]
+test <- df[-trainIndex, ]
+
+train
+```
+
+### Sample Plot
+
+```{r raw_plot, echo=FALSE, message=FALSE}
+train %>% ggplot(aes(x = wt, y = hp, color = mpg)) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = get_hurwitz_colors("light_gray")) +
+  geom_point() +
+  scale_color_hurwitz(discrete = FALSE, palette = "classic") +
+  labs(
+    x = "Weight (1000 lb)",
+    y = "Power (hp)",
+    color = "Fuel Efficiency (mpg)",
+    title = "Scatterplot of mtcars"
+  )
+```
+### The Goal
+
+Let's assume that the goal of this is to create a model that predicts `mpg` based
+on `weight` and `power`.
+
+
+## Regressions
+
+### Multiple Linear Regressions {.tabset}
+
+Keeping the goal in mind, one approach would be to create a simple linear regression.
+
+$y = mx + b$
+
+Where:
+
+* $y$: `mpg`
+* $m$: slope
+* $b$: intercept
+* $x$: independent variable (`weight` or `power`)
+
+```{r lm, echo=FALSE}
+lm_model <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+```
+
+Since we have 2 predictors (`weight` and `power`), then we could make 2 separate
+linear regressions, and choose whichever one has a better fit to be our predictor.
+
+```{r multiple_regressions, echo=FALSE}
+reg <- list()
+plt <- list()
+
+reg$mpg_wt <- lm_model %>% fit(mpg ~ wt, data = train)
+
+reg$mpg_hp <- lm_model %>% fit(mpg ~ hp, data = train)
+```
+
+#### Weight
+
+```{r wt_model, echo=FALSE}
+train %>% ggplot(aes(x = wt, y = mpg)) +
+  geom_abline(
+    slope = get_coef(reg$mpg_wt, "wt"),
+    intercept = get_coef(reg$mpg_wt),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    title = "MPG vs Weight",
+    subtitle = str_glue("r squared = {get_rsq(reg$mpg_wt, 3)}"),
+    x = "Weight (1000 lb)",
+    y = "Fuel Efficiency (mpg)"
+  )
+```
+
+#### Power
+
+```{r hp_model, echo=FALSE}
+train %>% ggplot(aes(x = hp, y = mpg)) +
+  geom_abline(
+    slope = get_coef(reg$mpg_hp, "hp"),
+    intercept = get_coef(reg$mpg_hp),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    title = "MPG vs Power",
+    subtitle = str_glue("r squared = {get_rsq(reg$mpg_hp, 3)}"),
+    x = "Power (hp)",
+    y = "Fuel Efficiency (mpg)"
+  )
+```
+
+Between these two regressions (click the tabs), weight looks like it may be a better predictor than power based on $r^2$.
+
+Wouldn't it be nice to have a model that creates a regression on both at the same time?
+
+---
+
+### Multilinear Regression
+
+Multilinear regression (MLR) does exactly this. The formula in our case would be:
+$y=m_1x_1 + m_2x_2 + b$
+
+Where:
+
+* $y$: `mpg`
+* $x_1$: `weight`
+* $m_1$: coefficient for `weight`
+* $x_2$: `power`
+* $m_2$: coefficient for `power`
+* $b$: intercept
+
+After performing this fit, here is the resulting MLR. 
+
+```{r regression, echo=FALSE}
+reg$mpg_all <-  lm_model %>%
+  fit(mpg ~ ., data = train)
+
+print(
+  str_glue(
+    "y =",
+    "{round(get_coef(reg$mpg_all, 'wt'), 2)}*weight",
+    " + ",
+    "{round(get_coef(reg$mpg_all, 'hp'), 2)}*hp",
+    " + ",
+    "{round(get_coef(reg$mpg_all), 2)}"
+  )
+)
+print(str_glue("r squared = ",
+               "{get_rsq(reg$mpg_all, 3)}"))
+```
+
+We can see that this is a better model than either of the individual linear regressions.
+
+But imagine if you have a very large number of predictors. There would have to be a term for each one. This is one of many reasons why we may want to perform dimension reduction. This will reduce the number of predictors so that the regression model is simplified.
+
+---
+
+*Takeaways*
+
+* We can build linear regression models based on each predictor
+* A multilinear regression model based on all predictors seems to be a better fit
+* Multilinear regression has more terms than regular linear regression
+
+## Projections
+
+Although our dataset already has very few predictors (2), it can be used to illustrate the logic of dimension reduction very well.
+
+So, lets go about reducing the number of predictors from 2 to 1.
+
+--- 
+
+### Correlated Predictors
+
+Let's go back to a plot of our 2 predictors.
+
+```{r corr_plot, echo=FALSE}
+train %>% ggplot(aes(x = wt, y = hp)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(x = "Weight (1000 lb)",
+       y = "Power (hp)",
+       title = "Correlated Predictors")
+```
+
+It is quite apparent that these two predictors are correlated. As weight increases, power generally increases too.
+
+Another way to put it is that if we know the weight, we know *something* about the power, and vice-versa. This can be referred to as *redundancy* (*i.e.* similar information is represented by multiple variables). Of course the relationship isn't perfect -- we cannot predict power with perfect accuracy based on weight.
+
+---
+
+### Least Squares Regression
+
+One way that we can see the correlation is with least-squares regression. This is what we generally mean when we say "linear regression", and is the method that was used in the previous section on MLR.
+
+Least-squares regression finds the line that minimizes the magnitude of the (squared) errors. But is it important to note that it is defining errors based only on the $y$ values, i.e. the difference between the actual $y$ values and the predicted $y$ values. These errors can be visualized as vertical lines.
+
+```{r pred_reg, echo=FALSE}
+reg$hp_wt <- lm_model %>% 
+  fit(hp ~ wt, data=train)
+```
+
+```{r vert_bars, echo=FALSE}
+train %>% ggplot(aes(x = wt, y = hp)) +
+  geom_segment(aes(xend = wt, yend = hp - reg$hp_wt$fit$residuals),
+               colour = get_hurwitz_colors("viking")) +
+  geom_abline(
+    slope = get_coef(reg$hp_wt, "wt"),
+    intercept = get_coef(reg$hp_wt),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(x = "Weight (1000 lb)",
+       y = "Power (hp)",
+       title = "Least-Squares Regression")
+```
+
+While the fact that least-squares regression is based on "vertical" errors may seem subtle, it can have certain implications, as we will see later.
+
+---
+
+### Regression Line as a New Axis?
+
+Getting back to the objective: reducing our 2 predictors to 1.
+
+This may not be an immediately obvious choice, but what if we converted our 2 predictors into 1 by taking the regression line to be a new axis.
+
+Each point could then be represented by a single number: how far along the regression line that point lies.
+
+To see how far along the regression line a point lies, we can draw a line segment that is perpendicular to the regression line, connecting the point to the regression line.
+
+Before we try this with our dataset, let me illustrate the idea with some made up data.
+
+```{r perps, echo=FALSE, fig.height=5, fig.width=5}
+df_fake <- tibble(
+  x = c(
+    0.23,
+    0.71,
+    1.02,
+    1.28,
+    1.63,
+    1.87,
+    1.98,
+    2.34,
+    2.8,
+    3.2,
+    3.56,
+    3.9,
+    4.5,
+    4.65
+  ),
+  y = c(
+    0.62,
+    0.89,
+    0.99,
+    1.95,
+    1.54,
+    2.07,
+    2.12,
+    2.95,
+    2.2,
+    3.8,
+    3.6,
+    3.43,
+    4.1,
+    4.94
+  )
+)
+
+reg$ideal <- lm_model %>%
+  fit(y ~ x, data = df_fake)
+
+segments <- perp_segment_coord(df_fake$x,
+                               df_fake$y,
+                               get_coef(reg$ideal),
+                               get_coef(reg$ideal, "x")) %>%
+  as.data.frame()
+
+df_fake %>% ggplot(aes(x = x, y = y)) +
+  geom_segment(data = segments,
+               aes(
+                 x = x0,
+                 y = y0,
+                 xend = x1,
+                 yend = y1
+               ),
+               colour = get_hurwitz_colors("viking")) +
+  geom_abline(
+    slope = get_coef(reg$ideal, "x"),
+    intercept = get_coef(reg$ideal),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point() +
+  xlim(c(0, 5)) + ylim(c(0, 5)) +
+  labs(title = "Fake Data with Regression Line",
+       subtitle = "Perpendicular lines show projection to new axis")
+
+rm(segments)
+```
+
+In this case, we could ignore our original 2 variables and instead use a simplified variable: the distance along the regression line where each point projects, as indicated by the blue lines. Since the original variables ($x$ and $y$) were correlated, this new variable still captures the information pretty well.
+
+One thing to note though is that not all information is preserved. For instance the points at $(1.28, 1.95)$ and $(1.63, 1.54)$ project to nearly the same point on the regression line. So with just this 1 dimension, the difference between these points is greatly reduced.
+
+---
+
+With this ideal example in mind, let's do the same to our car data. Let's add perpendicular lines connecting the regression line and the points to illustrate the new axis.
+
+```{r reg_axis, echo=FALSE}
+plt$hp_wt <- train %>% plot_perp(x = "wt", y = "hp") +
+  labs(x = "Weight (1000 lb)",
+       y = "Power (hp)",
+       title = "Regression Line as New Axis")
+
+plt$hp_wt
+```
+
+You may think, "Those are not perpendicular to the regression line!". They actually are, but because the scale on the 2 axes are so different, they don't look like it.
+
+---
+
+We can visualize the same plot with both axes to the same scale, but then we can't even see the lines. The magnitude of our vertical axis is just too much greater than our horizontal axis.
+
+```{r rescaled_reg_axis, echo=FALSE, fig.height=5, fig.width=5}
+max_scale <- 1.05 * (max(train$hp, train$wt))
+
+plt$hp_wt +
+  xlim(c(0, max_scale)) +
+  ylim(c(0, max_scale)) +
+  labs(title = "Equally Scaled Regression")
+
+rm(max_scale)
+```
+
+### The Problem of Scale
+
+Looking at the last plot, we can see that if we use this technique, then when we project the points to the regression line, the variable with smaller magnitude doesn't really seem to matter. Effectively, our new axis based on the regression line is pretty much the same as just using the `power` or $y$ axis as our predictor.
+
+The reality of this can be seen in this way. The regression line and vertical axis are pretty much parallel. So, when projecting to the regression line, it is about the same as projecting just to the vertical axis, and ignoring the other variable (`weight`).
+
+So if we were to use this regression line as our new axis for dimension reduction, we would pretty much just be taking our new variable to be the `power` and ignore the `weight` variable.
+
+---
+
+### Rescaling {.tabset}
+
+While the above commentary may make it seem like this approach is doomed, it actually shows something very different. Yes, it is true that this method is sensitive to the scale of the predictors, but the scale is actually quite arbitrary.
+
+Let's look at the `weight` axis in the above plots. As noted, these are in units of 1000 lb. So a weight of 5 is actually 5000 lb, for example.
+
+I can easily adjust my data so that the $x$ axis is in units of lb, which is completely valid. But this certainly affects the scale of the axis, and also our perception of the projection to the regression line.
+
+#### Normal axis scaling
+
+```{r, echo=FALSE}
+train$wt_lb <- train$wt * 1000
+
+plt$hp_wt_lb <- train %>% plot_perp(x = "wt_lb", y = "hp") +
+  labs(
+    x = "Weight (lb)",
+    y = "Power (hp)",
+    title = "Regression Line as New Axis, Rescaled Weight",
+    subtitle = "Lines are perpindicular to regression line"
+  )
+
+plt$hp_wt_lb
+```
+#### Equal Axis Scales
+
+```{r eq_axes, echo=FALSE, fig.height=5, fig.width=5}
+max_scale <- max(train$wt_lb, train$hp)
+
+plt$hp_wt_lb +
+  xlim(c(0, max_scale)) +
+  ylim(c(0, max_scale)) +
+  labs(subtitle = "",
+       title = "Rescaled Weight, Axes Scaled Equally")
+
+rm(max_scale)
+```
+
+Now, instead of the lines that are perpendicular to the regression line looking horizontal, they look vertical. This is because the $x$ axis now has greater magnitude.
+
+Additionally, the regression line is more parallel to the $x$ axis. So if we were to project onto this regression line, our new variable would mostly reflect the `weight` as a predictor.
+
+---
+
+*Takeaways:*
+
+* The scaling of the axes is arbitrary
+* Axis scales strongly affect how our predictor variables would be represented in a new variable based on projection to a regression line.
+
+## Rescaling
+
+The reason that when the fake data were projected to the new axis (regression line) worked so well is that I intentionally gave each variable a similar scale (0 to 5).
+
+So, in order to make this proposed method of dimension reduction work, we need to ensure that each variable is equally scaled.We can rest assured that this is okay, since we have already demonstrated that scale is arbitrary ($1000\ lb$ vs $lb$).
+
+We could, for instance, pick a value for each variable by which we would divide each value. By choosing the right number for each, they could have the same scale. But how would you choose this value? Trial and error? Spray and pray?
+
+There is actually a more robust method of rescaling. We can divide the values of each variable by that variable's standard deviation. If the values of each variable are at least kind of normally distributed, they will have similar scale. Let's take a look at the results of this.
+
+```{r norm, echo=FALSE, fig.height=5, fig.width=5}
+train$hp_norm <- train$hp / sd(train$hp)
+train$wt_norm <- train$wt / sd(train$wt)
+
+max_scale <- train %>% select(hp_norm, wt_norm) %>% max()
+
+plt$hp_norm_wt_norm <-
+  train %>% plot_perp(x = "wt_norm", y = "hp_norm") +
+  labs(
+    x = "Rescaled Weight",
+    y = "Rescaled Power",
+    title = "Rescaled Variables",
+    subtitle = "Variables divided by its standard deviation"
+  ) +
+  lims(x = c(0, max_scale), y = c(0, max_scale))
+
+plt$hp_norm_wt_norm
+
+rm(max_scale)
+```
+
+---
+
+### Replotting
+
+Now that the data are rescaled, the projections to the regression line are looking good!
+
+Going back to the overall goal: we are trying to create a regression model to predict `mpg` based on a single variable that captures the information of the 2 original variables `weight` and `power`.
+
+To do this, I will create a new variable which I will call `reg`, which is the distance along the regression line where each point projects. This can be seen as the where the blue lines touch the regression line in the plot above.
+
+For now, I am doing this based on geometry (*thank you Pythagoras*).
+
+So now, each point is represented by the single variable `reg`. We can plot this variable against `mpg` since this is the variable we want to predict based on our new single predictor variable, `reg`.
+
+```{r rot, echo=FALSE, message=FALSE}
+train <- train %>% reg_coord(x = "wt_norm", y = "hp_norm") %>%
+  left_join(train) %>%
+  rename("reg1" = x, "reg2" = y)
+
+plt$mpg_reg1 <- train %>% ggplot(aes(x = reg1, y = mpg)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(x = "New variable, reg",
+       y = "Fuel Efficiency (mpg)",
+       title = "Fuel Efficiency vs New Variable")
+
+plt$mpg_reg1
+```
+
+We can now perform a linear regression on the above plot to see how well our new variable predicts `fuel efficiency`.
+
+It is actually impressive! We have reduced the number of predictor variables, yet the correlation is the same as or stronger than:
+
+* Linear regression based on `power` ($r^2=0.625$)
+* Linear regression based on `weight` ($r^2=0.703$)
+* Multilinear regression based on both `weight` and `hp` ($r^2=0.8$)
+
+Of course, this is only a single observation, so we can't be sure if the difference is significant. Still, it is interesting.
+
+```{r, echo=FALSE}
+reg$mpg_reg1 <- lm_model %>%
+  fit(mpg ~ reg1, data = train)
+
+plt$mpg_reg1_fit <- train %>% ggplot(aes(x = reg1, y = mpg)) +
+  geom_abline(
+    slope = get_coef(reg$mpg_reg1, "reg1"),
+    intercept = get_coef(reg$mpg_reg1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    x = "New variable, reg",
+    y = "Fuel Efficiency (mpg)",
+    title = "Fuel Efficiency vs New Variable",
+    subtitle = str_glue("r squared = ",
+                        "{get_rsq(reg$mpg_reg1, 3)}")
+  )
+
+plt$mpg_reg1_fit
+```
+
+---
+
+*Takeaways*
+
+* Each variable can be rescaled by dividing by its standard deviation
+* Once each variable is rescaled, they have equal magnitude
+* Each variable then contributes equally to the new axis
+* This new single variable effectively captures the information of both original variables leading to similar predictive strength
+
+
+## Orthogonal Regression
+
+### New Coordinate System
+
+To review: our new variable `reg` is the projection of our data onto a linear
+regression line of the re-scaled `weight` and `hp` variables. This regression
+was performed using ordinary least-squares, which minimizes the errors in the
+$y$ direction.
+
+So far, we have only looked at the single new variable, represented by the
+projection. But even in this new coordinate system, we can look at it as
+having 2 dimensions:
+
+* $x$: regression line axis
+* $y$: axis perpendicular to regression line.
+
+The new $y$ axis coordinate can be seen as the distance a point is from the new
+$x$ axis, the regression line. These distances are shown in blue here.
+
+```{r, echo=FALSE, fig.width=5, fig.height=5}
+plt$hp_norm_wt_norm
+```
+
+We can plot the same points in this new *rotated* coordinate system.
+
+I will now refer to the regression axis as `reg1` and the perpendicular axis
+as `reg2`.
+
+```{r, echo=FALSE}
+plt$reg2_reg1 <- train %>% ggplot(aes(x = reg1, y = reg2)) +
+  geom_hline(yintercept = 0,
+             color = "lightgray",
+             size = 1) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Rotated Coordinate System Plot")
+
+plt$reg2_reg1
+```
+
+---
+
+### Persistent Correlation
+
+It may (or may not) seem odd that these new variables are still correlated!
+
+The strangeness may be more apparent when you think about why we took this
+approach in the first place. We realized our variables were correlated,
+so a projection to a regression line summarized both variables pretty well.
+
+Since they're still correlated, we could do this same process again. And again..
+
+Clearly, these variables are less correlated though
+than the original variables (`weight` and `hp`). We would expect this to be the
+case because *the regression on the original variables should have had points
+distributed evenly above and below the regression line.* After all, isn't that
+the whole idea of regression?
+
+So given that last fact, why are they still correlated?
+
+It comes down to how we performed the regression. As mentioned, we used
+ordinary least-squares regression, which minimizes the vertical errors. By 
+contrast, it did not minimize the real (perpendicular) distances from the
+regression line.
+
+This is problematic in a few ways: 
+
+* Firstly, it means that this method is
+dependent on which variable you put on which axis when performing regression.
+This is undesirable, because you have to be cautious and choosy to get the "best"
+results. Imagine brute-force comparing thousands of variable order combinations!
+* Second, it means that our new variables are still (potentially)
+correlated. This seems harmless, but it opens the idea of, why not do the method
+again. When do you decide to stop?
+
+---
+
+### Orthogonal Regression {.tabset}
+
+One way around this is to perform a different kind of linear regression.
+Orthogonal (*a.k.a* total least-square or Deming) regression minimizes the
+errors orthogonal (perpendicular) to the regression line.
+
+Below, I have shown both types of regression. The errors which are minimized for
+each method are shown in blue. I have also performed the projection to the
+different regression lines, and plotted the data in the new coordinate system.
+
+#### Regressions
+
+It is apparent that the regression lines are very different in each case.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+reg$dem <- Deming(train$wt_norm, train$hp_norm)
+
+reg$hp_norm_wt_norm <- lm_model %>%
+  fit(hp_norm ~ wt_norm, data = train)
+
+demi_segments <- perp_segment_coord(train$wt_norm, train$hp_norm,
+                                    reg$dem["Intercept"],
+                                    reg$dem["Slope"]) %>%
+  as.data.frame()
+
+plot <- train %>% ggplot(aes(x = wt_norm, y = hp_norm)) +
+  labs(x = "Rescaled Weight",
+       y = "Rescaled Power")
+
+plt$hp_norm_wt_norm_reg <- plot +
+  geom_abline(
+    slope = get_coef(reg$hp_norm_wt_norm, "wt_norm"),
+    intercept = get_coef(reg$hp_norm_wt_norm),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_segment(
+    aes(
+      xend = wt_norm,
+      yend = hp_norm - reg$hp_norm_wt_norm$fit$residuals
+    ),
+    colour = get_hurwitz_colors("viking")
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Ordinary Regression")
+
+plt$hp_norm_wt_norm_dem <- plot +
+  geom_abline(
+    slope = reg$dem["Slope"],
+    intercept = reg$dem["Intercept"],
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_segment(data = demi_segments,
+               aes(
+                 x = x0,
+                 y = y0,
+                 xend = x1,
+                 yend = y1
+               ),
+               colour = get_hurwitz_colors("viking")) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Orthogonal Regression",
+       y = "")
+
+grid.arrange(plt$hp_norm_wt_norm_reg, plt$hp_norm_wt_norm_dem, ncol = 2)
+
+rm(plot)
+
+```
+
+#### New Coordinates
+
+We can see that the new coordinates based on orthogonal regression are 
+uncorrelated as indicated by the horizontal regression line
+and $r^2=0$. The variables based on ordinary regression are only weakly correlated, but the regression line is obviously not horizontal.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+reg$reg2_reg1 <- lm_model %>%
+  fit(reg2 ~ reg1, data = train)
+
+plt$reg2_reg1_fit <- train %>% ggplot(aes(x = reg1, y = reg2)) +
+  geom_abline(
+    slope = get_coef(reg$reg2_reg1, "reg1"),
+    intercept = get_coef(reg$reg2_reg1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1,
+    alpha = 0.5
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Rotated Ordinary Regression",
+       subtitle = str_glue("r square = {get_rsq(reg$reg2_reg1, 3)}"))
+
+train <- train %>% add_column(ortho1 = sqrt((demi_segments$x1) ^ 2 +
+                                              (demi_segments$y1 - reg$dem["Intercept"]) ^ 2),
+                              ortho2 = sqrt(
+                                (demi_segments$x1 - demi_segments$x0) ^ 2 +
+                                  (demi_segments$y1 - demi_segments$y0) ^ 2
+                              ))
+
+train <- train %>% mutate(ortho1 = case_when(demi_segments$x1 < 0 ~ -ortho1,
+                                             demi_segments$x1 >= 0 ~ ortho1)) %>%
+  mutate(
+    ortho2 = case_when(
+      demi_segments$y0 < demi_segments$y1 ~ -ortho2,
+      demi_segments$y0 >= demi_segments$y1 ~ ortho2
+    )
+  )
+
+reg$ortho2_ortho1 <- lm_model %>%
+  fit(ortho2 ~ ortho1, data = train)
+
+plt$ortho2_orth1 <- train %>% ggplot(aes(x = ortho1, y = ortho2)) +
+  geom_abline(
+    slope = get_coef(reg$ortho2_ortho1, "ortho1"),
+    intercept = get_coef(reg$ortho2_ortho1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1,
+    alpha = 0.5
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Rotated Orthogonal Regression",
+       subtitle = str_glue("r square = {get_rsq(reg$ortho2_ortho1, 3)}"))
+
+grid.arrange(plt$reg2_reg1_fit, plt$ortho2_orth1, ncol = 2)
+
+rm(demi_segments)
+```
+
+---
+
+### Checking Predictor
+
+Now that we have been able to find a better regression model to project to, let's
+see how this new variable predicts fuel efficiency. For the regressions shown below ordinary least squares regression is used at this point, since we are trying to predict fuel efficiency based on our new variable. *ortho* and *ordinary* in the titles indicate the regression method used for generating the independent variable.
+
+The correlation seems to be about the same as the variable made from ordinary regression projection. While there is no obvious improvement, all the previous commentary on the benefit of orthogonal regression still holds.
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+reg$mpg_ortho1 <- lm_model %>%
+  fit(mpg ~ ortho1, data = train)
+
+plt$mpg_ortho1 <- train %>% ggplot(aes(x = ortho1, y = mpg)) +
+  geom_abline(
+    slope = get_coef(reg$mpg_ortho1, "ortho1"),
+    intercept = get_coef(reg$mpg_ortho1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    y = "",
+    title = "Ortho Projected Regression",
+    subtitle = str_glue("r square = {get_rsq(reg$mpg_ortho1, 3)}")
+  )
+
+plt$mpg_reg1_fit <- plt$mpg_reg1_fit +
+  labs(title = "Ordinary Projected Regression")
+
+
+grid.arrange(plt$mpg_reg1_fit + labs(x = "reg1"), plt$mpg_ortho1, ncol =
+               2)
+```
+
+---
+
+*Takeaways*
+
+* Ordinary least-square regression is inappropriate as a new axis for a few reasons:
+  * Minimizes *vertical* errors
+  * Dependent on which variable is on which axis
+  * New variables are still correlated
+* Orthogonal regression is advantageous:
+  * Variable order does not matter
+  * New variables are uncorrelated
+* Rescaling still matters
+
+## Eigenvectors
+
+So far we have explored 2 methods of finding a new axis to which we can project:
+
+* Ordinary least-squares regression
+* Orthogonal least-squares regression
+
+We began with regressions since these intuitively follow directions of variance. However, a more efficient method is to find the eigenvectors of the covariance matrix between the variables. These eigenvectors will serve as the new axes for data projection, similar to how the regression lines were used.
+
+This process is effectively the same as the orthogonal regression projection, but is much simpler to perform, since matrix operations are more concise than performing regression and projection based on geometries.
+
+Since it is pretty much the same process, we will still be computing on the scaled data, as this method is still sensitive to variable magnitude.
+
+---
+
+### Calculating the Eigenvectors
+
+Firstly, we compute the covariance matrix of our variables. For two variables, that is:
+
+\[\begin{bmatrix}Cov(x,x) & Cov(x,y)\\ 
+Cov(y,x) & Cov(y,y)\end{bmatrix}\]
+
+The main diagonal contains the variances of the individual variables since $Cov(a,a)=Var(a)$, while off-diagonal values are the covariances between variables. Notice that each individual variable has a variance of 1. This is because we have already divided by the standard deviation during rescaling.
+
+```{r cov, echo=FALSE}
+cov_df <- cov(train %>% select(hp_norm, wt_norm))
+
+round(cov_df, 2)
+```
+
+Next, we calculate the eigen-decomposition of the covariance matrix. This gives two eigenvalues each associated with an eigenvector. The number of eigen values and eigenvectors is always equal to the number of input variables.
+
+The largest eigenvalue represents the direction of maximum variance, which is analogous to our orthogonal regression line.
+
+```{r eigen_decomp, echo=FALSE}
+eig_df <- eigen(cov_df)
+
+eig_df
+```
+
+Another great thing about this method over orthogonal regression projection is that we now have more information about our transformation. For instance, we can see the amount of variance explained by each of our new axes.
+
+The total variance is given by the sum of the eigenvalues ($\lambda$):
+\[total\ variance\ = \sum_{i=1}^{N} \lambda_i\]
+So, the portion of the total variance "explained" by each of our new axes associated with each eigenvalue is given as \[portion\ of\ variance = \frac{\lambda}{total\ variance}\]
+
+---
+
+### Projecting to the New Axes {.tabset}
+
+Now that we have the eigen-decomposition, we can project to our new axes. This again is done with matrix operations as:
+
+\[New\ data=Eigen\ vectors^T*Original\ data^T\]
+
+I will call our new axes $eig1$ and $eig2$, not to be confused with the eigen values $\lambda_1$ and $\lambda_2$.
+
+```{r eig_project, echo=FALSE, warning=FALSE}
+norm_eig <-
+  t(eig_df$vectors) %*% t(select(train, wt_norm, hp_norm)) %>%
+  t() %>% as_tibble()
+
+train <- train %>% add_column("eig1" = norm_eig$V1,
+                              "eig2" = norm_eig$V2)
+
+rm(cov_df, eig_df, norm_eig)
+```
+
+---
+
+Notice how our new feature space created through eigenvector projection is qualitatively identical to the orthogonal regression projection. While the center and scale of the axes are not identical, we can see they are perfectly correlated.
+
+This shows that performing projection to an orthogonal regression line is essentially the same as projecting to the eigenvectors. So while eigenvectors and matrix operations may sound confusing, as long as the orthogonal regression projection makes sense, you can think of the eigenvector projection as just another mathematical way to do the same thing.
+
+#### New Axes
+
+```{r plot_eig, echo=FALSE, fig.width=10, fig.height=4}
+plt$eig2_eig1 <- train %>% ggplot(aes(x = eig1, y = eig2)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Eigen Projected Data")
+
+grid.arrange(plt$eig2_eig1,
+             plt$ortho2_orth1 + labs(subtitle = element_blank()),
+             ncol = 2)
+``` 
+
+#### Correlation
+
+```{r eig_demi_corr, echo=FALSE, warning=FALSE}
+reg$eig1_ortho1 <- lm_model %>%
+  fit(eig1 ~ ortho1, data = train)
+
+plt$eig1_ortho1 <- train %>% ggplot(aes(x = ortho1, y = eig1)) +
+  geom_abline(
+    slope = get_coef(reg$eig1_ortho1, "ortho1"),
+    intercept = get_coef(reg$eig1_ortho1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    title = "Eigenvector Projected vs
+       Orthogonal Regression Projected Variables",
+    subtitle = str_glue("r squared = {get_rsq(reg$eig1_ortho1, 3)}")
+  )
+
+plt$eig1_ortho1
+```
+
+### Principal Component Analysis {.tabset}
+
+Now, for the big reveal you have all been waiting for: What we just did is ... *drumroll please* ... principal component analysis!
+
+Orthogonal regression line = dominant eigenvector direction = first principal axis
+
+Orthogonal residual direction = secondary eigenvector direction = second principal axis
+
+So, behind the scenes of these fancy principal component functions, they are really just projecting to the directions given by the eigenvectors, which is pretty much the same as our orthogonal regression projections.
+
+So, let's take a look at the similarities between our eigenvector projections and the principal components found using the R function, `prcomp()`.
+
+#### New Coordinates
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+pca_fit <- train %>%
+  select(wt_norm, hp_norm) %>%
+  prcomp(scale = FALSE, center = FALSE)
+
+train <- train %>% add_column(PC1 = pca_fit$x[, 1],
+                              PC2 = pca_fit$x[, 2])
+
+rm(pca_fit)
+
+reg$PC1_eig1 <- lm_model %>%
+  fit(PC1 ~ eig1, data = train)
+
+plt$PC2_PC1 <- train %>% ggplot(aes(x = PC1, y = PC2)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "PCA Projected Data")
+
+grid.arrange(plt$PC2_PC1, plt$eig2_eig1, ncol = 2)
+```
+
+#### Correlation
+
+```{r, echo=FALSE}
+plt$PC1_eig1 <- train %>% ggplot(aes(x = eig1, y = PC1)) +
+  geom_abline(
+    slope = get_coef(reg$PC1_eig1, "eig1"),
+    intercept = get_coef(reg$PC1_eig1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "PCA vs Eigenvector Projected Variables",
+       subtitle = str_glue("r square = {get_rsq(reg$PC1_eig1, 3)}"))
+
+plt$PC1_eig1
+```
+
+Uh-oh. Why are they not perfectly correlated?
+
+So far, we have performed re-scaling as a pre-pocessing step, because we saw the undesirable effects that occur when our variables have different magnitudes.
+
+Now we are seeing another effect that our variables are having on PCA.
+
+To make the final steps work, we will explore how *re-centering* was not necessary for orthogonal regression projection, but is necessary for PCA.
+
+---
+
+*Takeaways*
+
+* The directions given by the eigenvectors of the covariance matrix are equivalent to the orthogonal regression projection axes
+* The eigenvalues associated with each eigenvector represent the amount of variance in that direction
+* The directions given by the eigenvectors are referred to as principal axes
+* PCA is sensitive the *re-centering*, which we will explore further
+
+## Recentering
+
+Previously, our orthogonal regression line had a non-zero intercept. This meant that the regression performed well no matter "where" our rescaled data were. However, PCA builds the new axes *through the origin* by definition.
+
+To illustrate the issue with this, we can build an orthogonal regression with the constraint that the intercept be zero (*i.e.* the regression line passes through the origin). This simulates how principal components are chosen.
+
+```{r, echo = false}
+reg$dem_zero_int <- c(slope = mean(train$hp_norm) / mean(train$wt_norm),
+                      intercept = 0)
+
+train %>% ggplot(aes(x = wt_norm, y = hp_norm)) +
+  geom_point() +
+  geom_abline(slope = reg$dem_zero_int["slope"],
+              intercept = reg$dem_zero_int["intercept"]) +
+  geom_abline(slope = reg$dem["Slope"],
+              intercept = reg$dem["Intercept"],
+              color = "gray") +
+  lims(x = c(0, 6), y = c(0, 6)) +
+  labs(
+    x = "Rescaled Weight",
+    y = "Rescaled Power",
+    title = "Orthogonal Regression",
+    subtitle = "Gray: standard Black: through origin"
+  )
+```
+Now, we can project to this new regression line. I will call our new axes that result from this projection `ortho_no_1` and `ortho_no_2`.
+
+Here is `ortho_no_1` plotted against `PC1`.
+
+```{r, echo=FALSE}
+ortho_no_segments <- perp_segment_coord(train$wt_norm,
+                                        train$hp_norm,
+                                        reg$dem_zero_int["intercept"],
+                                        reg$dem_zero_int["slope"]) %>%
+  as.data.frame()
+
+train <- train %>% add_column(ortho_no_1 = sqrt((ortho_no_segments$x1) ^
+                                                  2 +
+                                                  (ortho_no_segments$y1 - reg$dem_zero_int["intercept"]) ^
+                                                  2
+),
+ortho_no_2 = sqrt(
+  (ortho_no_segments$x1 - ortho_no_segments$x0) ^ 2 +
+    (ortho_no_segments$y1 - ortho_no_segments$y0) ^ 2
+))
+
+train <- train %>% mutate(
+  ortho_no_1 = case_when(
+    ortho_no_segments$x1 < 0 ~ -ortho_no_1,
+    ortho_no_segments$x1 >= 0 ~ ortho_no_1
+  )
+) %>%
+  mutate(
+    ortho_no_2 = case_when(
+      ortho_no_segments$y0 < ortho_no_segments$y1 ~ -ortho_no_2,
+      ortho_no_segments$y0 >= ortho_no_segments$y1 ~ ortho_no_2
+    )
+  )
+
+reg$PC1_ortho_no_1 <- lm_model %>%
+  fit(PC1 ~ ortho_no_1, data = train)
+```
+
+```{r, echo=FALSE}
+train %>% ggplot(aes(x = ortho_no_1, y = PC1)) +
+  geom_abline(
+    slope = get_coef(reg$PC1_ortho_no_1, "ortho_no_1"),
+    intercept = get_coef(reg$PC1_ortho_no_1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    title = "PC1 vs. ortho_no_1",
+    subtitle = str_glue("r square = {get_rsq(reg$PC1_ortho_no_1,3)}")
+  )
+```
+
+Now we have perfectly recapitulated Principal Component Analysis by projecting to an orthogonal regression line.
+
+However, by performing the orthogonal regression through the origin, we actually lose a lot of sensitivity to the data.
+
+---
+
+#### Loss of Sensitivity
+
+When we force orthogonal regression to pass through the origin, the line is fully defined by just two points: the origin $(0,0)$ and the centroid of the data $(\bar{x}, \bar{y})$. This is not a very good representation of the data due to these restrictions.
+
+To illustrate this, I can show what the first principal component (or orthogonal regression with fixed zero intercept) looks like on some fake data. As mentioned, the fit solely depends on the intercept and centroid, and ignoreS the actual slope of the data.
+
+```{r, echo=FALSE}
+df_fake$x_2 <- c(0.2,
+                 0.27,
+                 0.32,
+                 0.39,
+                 0.44,
+                 0.44,
+                 0.48,
+                 0.51,
+                 0.59,
+                 0.68,
+                 0.72,
+                 0.83,
+                 0.95,
+                 1.0)
+
+df_fake$y_2 <- c(0.97,
+                 0.86,
+                 0.86,
+                 0.75,
+                 0.7,
+                 0.65,
+                 0.49,
+                 0.50,
+                 0.41,
+                 0.45,
+                 0.37,
+                 0.26,
+                 0.30,
+                 0.11)
+
+plt$y_2_x_2 <- df_fake %>%
+  ggplot(aes(x = x_2, y = y_2)) +
+  geom_abline(
+    slope = mean(df_fake$y_2) / mean(df_fake$x_2),
+    intercept = c(0, 0),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  lims(x = c(0, 1), y = c(0, 1)) +
+  labs(
+    x = "Variable 1",
+    y = "Variable 2",
+    title = "First Principal Component of Uncentered Data",
+    subtitle = "Equivalent to Orthogonal Regression, 0 Intercept"
+  )
+
+
+plt$y_2_x_2
+```
+
+---
+
+### Recentering
+
+With this in mind, we have to consider our constraints. As I stated, principal axes (via matrix operations) always pass through the origin. So, we cannot get around that aspect when moving from orthogonal regression to principal component analysis.
+
+But recall how we rescaled our data to improve the regression performance?
+
+Now, we can do something similar. It can be shown that orthogonal regression, as well as principal components always pass through the centroid, which is the mean of each variable $(\bar{x}, \bar{y})$.
+
+So what if we performed some operation on our data such that the centroid is at the origin? Then we no longer need to limit the fit of the regression just to ensure that the line passes through the origin, as it will naturally do so.
+
+We can do that by subtracting the mean of each variable from each point. Recall that our rescaling operation was dividing each point by the standard deviation of each variable. Now if we both rescale (divide by $\sigma$) and recenter (subtract $\bar{x}$) the equation for transforming each variable is:
+
+$X=\frac{x-\bar{x}}{\sigma}$
+
+But keep in mind that $x$ is referring to any variable, not just the variable on the $x$ axis.
+
+---
+
+### Standardization
+
+The above equation may look familiar. Indeed, it is the equation of a $z$-score to convert data to a standard normal distribution. In the standard normal distribution:
+
+* The standard deviation is 1, which for us means that each variable contributes equally to the regression for projection
+* The mean is 0, which means that the orthogonal regression can be optimal while passing through the origin as is necessary for PCA.
+
+When the data are standardized, here is what they look like
+
+```{r, echo=FALSE, fig.height=5, fig.width=5}
+train <- train %>%
+  mutate(hp_z =  (hp - mean(hp)) / sd(hp),
+         wt_z =  (wt - mean(wt)) / sd(wt))
+
+max_scale <- max(abs(train$hp_z), abs(train$wt_z))
+
+plt$hp_z_tw_z <- train %>% ggplot(aes(x = wt_z, y = hp_z)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  geom_point(
+    x = mean(train$wt_z),
+    y = mean(train$hp_z),
+    color = "darkgray",
+    pch = "+",
+    size = 5
+  ) +
+  lims(x = c(-max_scale, max_scale),
+       y = c(-max_scale, max_scale)) +
+  labs(
+    title = "Standardized Variables",
+    subtitle = "Centroid marked with +",
+    x = "Standardized Weight",
+    y = "Standardized Power"
+  )
+
+plt$hp_z_tw_z
+```
+
+---
+
+### Dimension Reduction of Standardized Variables {.tabset}
+
+Using the standardized variables, we can compare (a) the projection to orthogonal regression and (b) PCA.
+
+```{r, echo=FALSE}
+reg$hp_z_wt_z <- Deming(train$wt_z, train$hp_z)
+
+demi_segments <- perp_segment_coord(train$wt_z, train$hp_z,
+                                    reg$hp_z_wt_z["Intercept"],
+                                    reg$hp_z_wt_z["Slope"]) %>%
+  as.data.frame()
+
+train <- train %>% mutate(ortho_z_1 = sqrt((demi_segments$x1) ^ 2 +
+                                             (demi_segments$y1 -
+                                                reg$hp_z_wt_z["Intercept"]) ^ 2),
+                          ortho_z_2 = sqrt(
+                            (demi_segments$x1 - demi_segments$x0) ^ 2 +
+                              (demi_segments$y1 - demi_segments$y0) ^ 2
+                          ))
+
+train <- train %>% mutate(ortho_z_1 = case_when(
+  demi_segments$x1 < 0 ~ -ortho_z_1,
+  demi_segments$x1 >= 0 ~ ortho_z_1
+)) %>%
+  mutate(
+    ortho_z_2 = case_when(
+      demi_segments$y0 < demi_segments$y1 ~ -ortho_z_2,
+      demi_segments$y0 >= demi_segments$y1 ~ ortho_z_2
+    )
+  )
+
+pca_z_fit <- train %>%
+  select(wt_z, hp_z) %>%
+  prcomp(scale = FALSE, center = FALSE)
+
+train <- train %>% add_column(PC1_z = pca_z_fit$x[, 1],
+                              PC2_z = pca_z_fit$x[, 2])
+
+remove(pca_z_fit)
+
+reg$PC1_z_ortho_z_1 <- lm_model %>%
+  fit(PC1_z ~ ortho_z_1, data = train)
+```
+
+#### Projections
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+plt$ortho_z_2_ortho_z_1 <- train %>%
+  ggplot(aes(x = ortho_z_1, y = ortho_z_2)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Orthogonal Regression Projection",
+       x = "ortho_1 of standardized variables",
+       y = "ortho_2 of standardized variables")
+
+plt$PC2_z_PC1_z <- train %>%
+  ggplot(aes(x = PC1_z, y = PC2_z)) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(title = "Principal Component Projection",
+       x = "PC1 of standardized variables",
+       y = "PC2 of standardized variables")
+
+grid.arrange(plt$ortho_z_2_ortho_z_1,
+             plt$PC2_z_PC1_z,
+             ncol = 2)
+```
+
+#### Correlation
+
+```{r, echo=FALSE, warning=FALSE}
+plt$PC1_z_ortho_z_1 <- train %>%
+  ggplot(aes(x = ortho_z_1, y = PC1_z)) +
+  geom_abline(
+    slope = get_coef(reg$PC1_z_ortho_z_1, "ortho_z_1"),
+    intercept = get_coef(reg$PC1_z_ortho_z_1),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    title = "PC1 and Orthogonal Projection of Standardized Variables",
+    x = "ortho_1 of standardized variables",
+    y = "PC1 of standardized variables",
+    subtitle = str_glue("r square = {get_rsq(reg$PC1_z_ortho_z_1,3)}")
+  )
+
+plt$PC1_z_ortho_z_1
+```
+
+---
+
+### Conclusion
+
+When the data are standardized, then orthogonal regression projection is identical to PCA.
+
+---
+
+*Takeaways*
+
+* Principal components always pass through the origin, which limits their fit to uncentered data
+* We can center data by converting to $z$-score, which allows PCA to optimally fit the data
+* PCA is identical to projection to an orthogonal regression, once data have been standardized
+
+## Summary
+
+We have taken a road trip to fundamentally understanding principal component analysis.
+
+### Motivation
+
+There are a variety of reasons for performing dimension reduction, including simplifying the overall model by reducing the number of variables.
+
+Some variables may be correlated, so there is a *redundancy* in their information. This makes itself apparent in that if you know the value of one correlated variable, you can predict the value of the other variable. Converting these correlated variables into a single new variable seems like a good choice for reducing the number of variables while retaining information.
+
+### Projection to Linear Regression
+
+Since linear regressions follow the pattern of correlated variables, we could project to a linear regression as a single new variable representing the original correlated variables.
+
+However, ordinary least-squares regression is dependent on variable order. You will get a different axis dependent on which variable is on each axis.
+
+Orthogonal regression (*a.k.a.* Deming or Total Least Squares regression) is independent of variable order, and is a better choice. 
+
+Additionally, when projecting to ordinary least-squares regression, the resulting variables may still be correlated. The resultant variables from projection to orthogonal regression are not.
+
+Since PCA is essentially the same as this approach, there is a catch. As mentioned, the new resulting axes are uncorrelated by definition. If all the original variables are correlated, then only the first principal axis has any meaning. For this reason, exploratory data analysis is crucial to see which original variables are correlated. If they all are, then PCA is not advisable beyond the first principal component.
+
+### Standardization
+
+We need to standardize our variables for PCA for a few reasons.
+
+* When variables have different magnitudes, the larger magnitude variable(s) dominate the new axis.
+* When variables are uncentered, PCA is completely insensitive to slope, and is only defined by the centroid.
+
+We can negate the above concerns by standardizing each variable by converting to a $z$-score.
+
+$z=\frac{x-\bar{x}}{\sigma}$.
+
+It should be noted that this method works best for normally distributed variables. PCA performance can be improved by pre-processing data to become approximately normally distributed before standardization. For instance, if your data are log-normally distributed, you may want to first take the $\log$ of your variable before calculating $z$-score.
+
+Since standardization is so crucial, most functions that are implementations of PCA in various programming languages (R, Python, etc.) have an option to perform centering and rescaling automatically. However, these operations are generally optimal for normally distributed data but the functions do not check this assumption. For this reason it is best to check for normality (*e.g.* with a Q-Q plot), and if they are not normal, perform your own pre-processing.
+
+### Eigen Decomposition
+
+The orthogonal regression follows the direction of maximum variance of the variables. This direction can be calculated by eigen decomposition. This yields:
+
+* Eigen vectors: which indicate the direction(s) of maximum variance
+* Eigen values: which indicate the amount of total variance represented by the corresponding eigen vector
+
+PCA is performed using eigen decomposition. This gives more information than simply projecting to the orthogonal regression lines (*e.g.* amount of variance represented by the new axes).
+
+---
+
+### Back to The Predictive Model
+
+We started this journey by trying to predict vehicle fuel efficiency from weight and power. After doing some linear regressions on the variables independently, and then with multilinear regression, we decided to try dimension reduction to capture the effect of both weight and power in a single variable.
+
+So to wrap it up, let's take look at predicting fuel efficiency based on the first principal component
+
+```{r, echo=FALSE}
+reg$mpg_PC1_z <- lm_model %>%
+  fit(mpg ~ PC1_z, data = train)
+
+plt$mpg_PC1_z <- train %>%
+  ggplot(aes(x = PC1_z, y = mpg)) +
+  geom_abline(
+    slope = get_coef(reg$mpg_PC1_z, "PC1_z"),
+    intercept = get_coef(reg$mpg_PC1_z),
+    color = get_hurwitz_colors("light_gray"),
+    size = 1
+  ) +
+  geom_point(color = get_hurwitz_colors("red")) +
+  labs(
+    x = "First Principal Component (PC1)",
+    y = "Fuel Efficiency (mpg)",
+    title = "Fuel Efficiency vs First Principal Component",
+    subtitle = str_glue("r-square = {get_rsq(reg$mpg_PC1_z)}")
+  )
+
+plt$mpg_PC1_z
+```
+
+It seems that for this example case, mutlilinear regression is a better way of predicting fuel efficiency from the original two variables. And maybe that is the final lesson. This project showed us intuitively how PCA works. But in our case it was not necessary since we had so few variables, and actually made the performance worse. Sometimes "simpler" models like MLR are better!
+
+Hopefully this has shown how PCA works. Now you may better understand how and why we preprocess data, what the variance measures indicate, and when PCA may actually be detrimental to model performance.
