@@ -10,7 +10,7 @@ I begin by considering the redundancy in correlated predictors, then attempt to 
 
 ## Source Code
 
-Source code for this project is located on in the GitHub repository [schackartk/exploring_algorithms](https://github.com/schackartk/exploring_algorithms)
+Source code for this project is located in the GitHub repository [schackartk/exploring_algorithms](https://github.com/schackartk/exploring_algorithms)
 
 ## Authorship
 
